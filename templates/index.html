@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NBA Prop Analyzer</title>
+  <link rel="stylesheet" href="/static/css/styles.css" />
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ═══════════════════════════ HEADER ═══════════════════════════════════════ -->
+<header class="app-header">
+  <div class="header-left">
+    <span class="logo-icon">🏀</span>
+    <h1 class="app-title">NBA Prop Analyzer</h1>
+    <span class="header-subtitle">2025–26 Season</span>
+  </div>
+  <div class="header-right">
+    <div id="quota-badge" class="quota-badge hidden">
+      <span class="quota-icon">⚡</span>
+      <span id="quota-text">— / — calls</span>
+    </div>
+    <button id="refresh-odds-btn" class="btn btn-outline btn-sm">
+      ↻ Refresh Odds
+    </button>
+  </div>
+</header>
+
+<!-- ═══════════════════════════ MAIN LAYOUT ══════════════════════════════════ -->
+<div class="app-layout">
+
+  <!-- ════════════ LEFT SIDEBAR ════════════ -->
+  <aside class="sidebar" id="sidebar">
+
+    <!-- Today's Games -->
+    <section class="sidebar-section" id="games-section">
+      <div class="section-header">
+        <h2 class="section-title">Games</h2>
+        <span id="games-count" class="badge"></span>
+      </div>
+      <div class="day-tabs">
+        <button class="day-tab active" data-offset="0">Today</button>
+        <button class="day-tab" data-offset="1">Tomorrow</button>
+      </div>
+      <div id="games-container">
+        <div class="skeleton-list">
+          <div class="skeleton-item"></div>
+          <div class="skeleton-item"></div>
+          <div class="skeleton-item"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Player Selection (shown after game click) -->
+    <section class="sidebar-section" id="player-select-section" style="display:none">
+      <div class="section-header">
+        <h2 class="section-title">Players</h2>
+        <button class="btn btn-ghost btn-xs" id="close-roster-btn">✕ Close</button>
+      </div>
+      <div class="team-tabs" id="team-tabs"></div>
+      <div id="roster-container">
+        <div class="skeleton-list">
+          <div class="skeleton-item"></div>
+          <div class="skeleton-item"></div>
+          <div class="skeleton-item"></div>
+          <div class="skeleton-item"></div>
+        </div>
+      </div>
+    </section>
+
+  </aside>
+
+  <!-- ════════════ MAIN PANEL ════════════ -->
+  <main class="main-panel" id="main-panel">
+
+    <!-- Empty state -->
+    <div id="empty-state" class="empty-state">
+      <div class="empty-icon">📊</div>
+      <h2>Select a Game to Begin</h2>
+      <p>Pick a matchup from the sidebar, then choose players to analyse their props and compare against DraftKings lines.</p>
+    </div>
+
+    <!-- Analysis cards rendered here by JS -->
+    <div id="analysis-container" class="analysis-container"></div>
+
+  </main>
+
+  <!-- ════════════ RIGHT PANEL — PARLAY ════════════ -->
+  <aside class="parlay-panel" id="parlay-panel">
+
+    <!-- Best Value Picks -->
+    <section class="sidebar-section">
+      <div class="section-header">
+        <h2 class="section-title">Best Value Picks</h2>
+        <span id="picks-count" class="badge"></span>
+      </div>
+      <div id="best-picks-container">
+        <p class="muted-text small">Analyse players to see value picks.</p>
+      </div>
+    </section>
+
+    <!-- Divider -->
+    <div class="panel-divider"></div>
+
+    <!-- Parlay Builder -->
+    <section class="sidebar-section">
+      <div class="section-header">
+        <h2 class="section-title">Parlay Builder</h2>
+        <span id="legs-count" class="badge"></span>
+      </div>
+
+      <div class="parlay-actions">
+        <button id="auto-suggest-btn" class="btn btn-gold btn-sm">⚡ Auto-Suggest</button>
+        <button id="clear-parlay-btn" class="btn btn-outline btn-sm">✕ Clear</button>
+      </div>
+
+      <div id="parlay-legs-container">
+        <p class="muted-text small" id="parlay-empty-msg">Add picks or use Auto-Suggest.</p>
+      </div>
+
+      <!-- Parlay Summary -->
+      <div id="parlay-summary" class="parlay-summary hidden">
+        <div class="summary-row">
+          <span class="summary-label">Combined Odds</span>
+          <span id="summary-odds" class="summary-value gold">—</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">Model Probability</span>
+          <span id="summary-prob" class="summary-value">—</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">Expected Value <small>(per $100)</small></span>
+          <span id="summary-ev" class="summary-value">—</span>
+        </div>
+      </div>
+    </section>
+
+  </aside>
+
+</div><!-- /.app-layout -->
+
+<!-- ═══════════════════════════ TEMPLATES ════════════════════════════════════ -->
+
+<!-- Game Card Template -->
+<template id="tpl-game-card">
+  <div class="game-card" data-game-id="" data-home-id="" data-away-id=""
+       data-home-name="" data-away-name="" data-odds-event-id="">
+    <div class="game-teams">
+      <div class="team away">
+        <span class="team-abbr away-abbr"></span>
+        <span class="team-name away-name"></span>
+      </div>
+      <div class="game-vs">
+        <span class="vs-label">vs</span>
+        <span class="game-time"></span>
+      </div>
+      <div class="team home">
+        <span class="team-name home-name"></span>
+        <span class="team-abbr home-abbr"></span>
+      </div>
+    </div>
+    <div class="game-status"></div>
+  </div>
+</template>
+
+<!-- Player Row Template -->
+<template id="tpl-player-row">
+  <div class="player-row" data-player-id="">
+    <div class="player-row-info">
+      <span class="player-row-num"></span>
+      <div>
+        <span class="player-row-name"></span>
+        <span class="player-row-pos"></span>
+      </div>
+    </div>
+    <button class="btn-analyze">Analyze</button>
+  </div>
+</template>
+
+<!-- Analysis Card Template -->
+<template id="tpl-analysis-card">
+  <div class="analysis-card" data-player-id="">
+
+    <!-- Card Header -->
+    <div class="card-header">
+      <div class="card-player-info">
+        <h3 class="card-player-name"></h3>
+        <span class="card-player-meta"></span>
+      </div>
+      <div class="card-header-actions">
+        <span class="games-played-badge"></span>
+        <button class="btn-close-card" title="Remove">✕</button>
+      </div>
+    </div>
+
+    <!-- Prop Tabs -->
+    <div class="prop-tabs">
+      <button class="prop-tab active" data-prop="points">Points</button>
+      <button class="prop-tab" data-prop="rebounds">Rebounds</button>
+      <button class="prop-tab" data-prop="assists">Assists</button>
+      <button class="prop-tab" data-prop="pra">PRA</button>
+    </div>
+
+    <!-- Stats Grid -->
+    <div class="stats-grid">
+      <div class="stat-cell">
+        <div class="stat-cell-label">Season Avg</div>
+        <div class="stat-cell-value season-val">—</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-cell-label">L5 Avg</div>
+        <div class="stat-cell-value l5-val">—</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-cell-label">L10 Avg</div>
+        <div class="stat-cell-value l10-val">—</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-cell-label">Home</div>
+        <div class="stat-cell-value home-val">—</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-cell-label">Away</div>
+        <div class="stat-cell-value away-val">—</div>
+      </div>
+    </div>
+
+    <!-- Projection Row -->
+    <div class="proj-row">
+      <div class="proj-block">
+        <div class="proj-label">DK Line</div>
+        <div class="proj-val line-val">—</div>
+      </div>
+      <div class="proj-block">
+        <div class="proj-label">Projection</div>
+        <div class="proj-val projection-val">—</div>
+      </div>
+      <div class="proj-block">
+        <div class="proj-label">Edge</div>
+        <div class="proj-val edge-val">—</div>
+      </div>
+      <div class="proj-block">
+        <span class="value-badge">—</span>
+        <span class="confidence-badge">—</span>
+      </div>
+    </div>
+
+    <!-- Odds Probability Row (shown only if odds available) -->
+    <div class="odds-prob-row hidden">
+      <div class="prob-block">
+        <div class="prob-label">Implied Prob (Over)</div>
+        <div class="prob-val implied-prob">—</div>
+      </div>
+      <div class="prob-block">
+        <div class="prob-label">Model Prob (Over)</div>
+        <div class="prob-val model-prob">—</div>
+      </div>
+      <div class="prob-block">
+        <div class="prob-label">Over Odds</div>
+        <div class="prob-val over-odds-val">—</div>
+      </div>
+    </div>
+
+    <!-- No-odds notice -->
+    <div class="no-odds-notice hidden">
+      ⚠️ No DraftKings lines found — showing model projection only.
+    </div>
+
+    <!-- Value Gauge -->
+    <div class="gauge-row hidden">
+      <div class="gauge-label-left">Avoid</div>
+      <div class="gauge-track">
+        <div class="gauge-fill"></div>
+        <div class="gauge-marker"></div>
+      </div>
+      <div class="gauge-label-right">Strong</div>
+    </div>
+
+    <!-- Charts -->
+    <div class="charts-grid">
+      <div class="chart-wrap full-width">
+        <div class="chart-title">Recent Form — Last 10 Games</div>
+        <div class="chart-canvas-wrap h-160">
+          <canvas class="chart-recent-form"></canvas>
+        </div>
+      </div>
+      <div class="chart-wrap full-width">
+        <div class="chart-title">Season Trend — Rolling 5-Game Average</div>
+        <div class="chart-canvas-wrap h-140">
+          <canvas class="chart-season-trend"></canvas>
+        </div>
+      </div>
+      <div class="chart-wrap half-width">
+        <div class="chart-title">Home vs Away</div>
+        <div class="chart-canvas-wrap h-130">
+          <canvas class="chart-home-away"></canvas>
+        </div>
+      </div>
+      <div class="chart-wrap half-width adj-breakdown">
+        <div class="chart-title">Model Adjustments</div>
+        <div class="adj-items"></div>
+      </div>
+    </div>
+
+    <!-- Add to Parlay -->
+    <div class="card-footer">
+      <button class="btn btn-green btn-add-parlay" data-prop="">
+        + Add Over to Parlay
+      </button>
+    </div>
+
+  </div>
+</template>
+
+<!-- ═══════════════════════════ SCRIPTS ══════════════════════════════════════ -->
+<script src="/static/js/charts.js"></script>
+<script src="/static/js/parlay.js"></script>
+<script src="/static/js/app.js"></script>
+
+</body>
+</html>
