@@ -129,7 +129,7 @@ class NBAStatsService:
     # ------------------------------------------------------------------ #
 
     def get_team_roster(self, team_id: int) -> list:
-        cache_key = f"roster_{team_id}_{date.today().isoformat()}"
+        cache_key = f"roster_{team_id}_{_today_et().isoformat()}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
@@ -164,7 +164,7 @@ class NBAStatsService:
     # ------------------------------------------------------------------ #
 
     def get_player_stats(self, player_id: int) -> dict:
-        cache_key = f"player_stats_{player_id}_{date.today().isoformat()}"
+        cache_key = f"player_stats_{player_id}_{_today_et().isoformat()}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
@@ -301,7 +301,7 @@ class NBAStatsService:
         }
 
     def _get_league_team_stats(self) -> list:
-        cache_key = f"league_opp_stats_{date.today().isoformat()}"
+        cache_key = f"league_opp_stats_{_today_et().isoformat()}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
