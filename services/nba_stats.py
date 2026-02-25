@@ -6,11 +6,18 @@ Cache TTL: 1 hour for stats, 30 min for today's games/rosters.
 
 import time
 import logging
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 
 import pandas as pd
 import numpy as np
 import pytz
+
+_EASTERN = pytz.timezone("America/New_York")
+
+
+def _today_et():
+    """Return today's date in US/Eastern — safe on UTC-based cloud servers."""
+    return datetime.now(_EASTERN).date()
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +59,8 @@ class NBAStatsService:
         Fetch games for today (day_offset=0) or any offset (1=tomorrow, -1=yesterday).
         Uses ScoreboardV2 which supports day_offset natively.
         """
-        cache_key = f"games_{day_offset}_{date.today().isoformat()}"
+        today_et = _today_et()
+        cache_key = f"games_{day_offset}_{today_et.isoformat()}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
@@ -62,7 +70,7 @@ class NBAStatsService:
 
         try:
             time.sleep(NBA_API_DELAY)
-            target_date = (date.today() + timedelta(days=day_offset)).isoformat()
+            target_date = (today_et + timedelta(days=day_offset)).isoformat()
             sb = stats_sb.ScoreboardV2(
                 game_date=target_date,
                 day_offset="0",

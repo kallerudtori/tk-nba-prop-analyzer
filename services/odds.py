@@ -39,7 +39,8 @@ class OddsService:
     def get_nba_events(self, day_offset: int = 0) -> list:
         """Return NBA events from The Odds API for the given day (in US/Eastern time)."""
         eastern = pytz.timezone("America/New_York")
-        target_local = date.today() + timedelta(days=day_offset)
+        today_et = datetime.now(eastern).date()
+        target_local = today_et + timedelta(days=day_offset)
 
         # Build UTC window covering the full Eastern-timezone calendar day
         day_start_et = eastern.localize(datetime.combine(target_local, dt_time(0, 0)))
@@ -210,9 +211,10 @@ class OddsService:
     def clear_cache(self, event_id: str | None = None):
         if event_id:
             self.cache.delete(f"props_{event_id}")
-        # Clear both today and tomorrow's event caches
-        self.cache.delete(f"nba_events_{date.today().isoformat()}")
-        self.cache.delete(f"nba_events_{(date.today() + timedelta(days=1)).isoformat()}")
+        # Clear both today and tomorrow's event caches (use ET date)
+        today_et = datetime.now(pytz.timezone("America/New_York")).date()
+        self.cache.delete(f"nba_events_{today_et.isoformat()}")
+        self.cache.delete(f"nba_events_{(today_et + timedelta(days=1)).isoformat()}")
 
     def get_quota(self) -> dict | None:
         return self._quota
