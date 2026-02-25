@@ -246,6 +246,9 @@ async function loadPlayerAnalysis(player, game, opponentTeamId, isHome) {
     const card = buildAnalysisCard(data.analysis);
     document.getElementById("analysis-container").appendChild(card);
 
+    // On mobile, jump to the Analysis tab automatically
+    mobileActivatePanel("main-panel");
+
     // Register all props as value picks
     const a = data.analysis;
     for (const [propKey, prop] of Object.entries(a.props)) {
@@ -499,6 +502,28 @@ function _valueBadgeCls(label) {
   if (label === "No Odds")      return "no-odds";
   return "avoid";
 }
+
+/* ══════════════════════════════════════════════════════════════════════════ *
+ *  Mobile navigation                                                          *
+ * ══════════════════════════════════════════════════════════════════════════ */
+const MOBILE_PANELS = ["sidebar", "main-panel", "parlay-panel"];
+
+function mobileActivatePanel(panelId) {
+  MOBILE_PANELS.forEach(id => {
+    document.getElementById(id)?.classList.remove("mobile-active");
+  });
+  document.getElementById(panelId)?.classList.add("mobile-active");
+  document.querySelectorAll(".mobile-nav-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.panel === panelId);
+  });
+}
+
+(function initMobileNav() {
+  document.querySelectorAll(".mobile-nav-btn").forEach(btn => {
+    btn.addEventListener("click", () => mobileActivatePanel(btn.dataset.panel));
+  });
+  mobileActivatePanel("sidebar");
+})();
 
 /* ── Toast notifications ─────────────────────────────────────────────────── */
 let _toastContainer = null;

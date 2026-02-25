@@ -1000,6 +1000,38 @@ canvas { display: block; }
   font-size: 0.82rem;
 }
 
+/* ═══════════════════════════ MOBILE NAV ════════════════════════════════════ */
+.mobile-nav {
+  display: none;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 58px;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border);
+  z-index: 200;
+}
+
+.mobile-nav-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 0;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.mobile-nav-btn.active { color: var(--gold); }
+.mobile-nav-btn .nav-icon { font-size: 1.3rem; line-height: 1; }
+
 /* ═══════════════════════════ RESPONSIVE ════════════════════════════════════ */
 @media (max-width: 1100px) {
   :root { --sidebar-w: 250px; --parlay-w: 260px; }
@@ -1018,4 +1050,70 @@ canvas { display: block; }
     max-height: 320px;
     overflow-y: auto;
   }
+}
+
+@media (max-width: 640px) {
+  :root { --header-h: 50px; }
+
+  /* Show bottom nav */
+  .mobile-nav { display: flex; }
+
+  /* Extra padding so content isn't hidden behind the nav bar */
+  body { padding-bottom: 58px; }
+
+  /* Collapse the 3-column grid to a single stacked layout */
+  .app-layout {
+    display: block;
+    height: auto;
+    overflow: visible;
+  }
+
+  /* Each panel takes full viewport height minus header + nav */
+  .sidebar,
+  .main-panel,
+  .parlay-panel {
+    height: calc(100vh - var(--header-h) - 58px);
+    overflow-y: auto;
+    display: none;
+    border-right: none;
+    border-left: none;
+    border-top: none;
+  }
+
+  .sidebar.mobile-active     { display: flex; flex-direction: column; }
+  .main-panel.mobile-active  { display: block; }
+  .parlay-panel.mobile-active { display: flex; flex-direction: column; }
+
+  /* Compact header */
+  .header-subtitle { display: none; }
+  .quota-badge     { display: none !important; }
+  .app-header      { padding: 0 14px; }
+
+  /* Analysis cards: single-column charts */
+  .charts-grid { grid-template-columns: 1fr; padding: 12px; gap: 10px; }
+  .chart-wrap.half-width { grid-column: auto; }
+
+  /* Stats row: 3 cols instead of 5, allow horizontal scroll */
+  .stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+    overflow-x: auto;
+  }
+
+  /* Prop tabs: scrollable row */
+  .prop-tabs { overflow-x: auto; flex-wrap: nowrap; padding: 8px 12px; gap: 5px; }
+  .prop-tab  { flex-shrink: 0; }
+
+  /* Projection row: 2×2 grid */
+  .proj-row { grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px 14px; }
+
+  /* Card header: tighter */
+  .card-header { padding: 12px 14px 10px; }
+
+  /* Parlay actions: full width buttons */
+  .parlay-actions { flex-direction: column; gap: 5px; }
+  .parlay-actions .btn { width: 100%; justify-content: center; }
+
+  /* Toast: full width at bottom above nav */
+  #toast-container { bottom: 68px; right: 10px; left: 10px; }
+  .toast { max-width: 100%; }
 }

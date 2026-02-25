@@ -6,6 +6,7 @@ Cache TTL: 15 minutes for odds data.
 
 import os
 import logging
+import unicodedata
 from datetime import date, datetime, timedelta, time as dt_time, timezone
 
 import pytz
@@ -177,15 +178,23 @@ class OddsService:
         return result if result else None
 
     @staticmethod
+    def _normalize_name(s: str) -> str:
+        """Lowercase, strip diacritics (e.g. Vučević → vucevic) and periods (Jr.)."""
+        s = unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode("ascii")
+        return s.replace(".", "").lower().strip()
+
+    @staticmethod
     def _names_match(desc: str, player: str) -> bool:
-        if desc == player:
+        desc_n   = OddsService._normalize_name(desc)
+        player_n = OddsService._normalize_name(player)
+        if desc_n == player_n:
             return True
         # Last-name match
-        d_parts = desc.split()
-        p_parts = player.split()
+        d_parts = desc_n.split()
+        p_parts = player_n.split()
         if d_parts and p_parts and d_parts[-1] == p_parts[-1]:
             return True
-        return player in desc or desc in player
+        return player_n in desc_n or desc_n in player_n
 
     @staticmethod
     def _to_prob(american_odds: int) -> float:
