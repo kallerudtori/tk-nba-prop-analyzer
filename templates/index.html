@@ -75,6 +75,9 @@
   <!-- ════════════ MAIN PANEL ════════════ -->
   <main class="main-panel" id="main-panel">
 
+    <!-- Player Tabs -->
+    <div id="player-tabs" class="player-tabs hidden"></div>
+
     <!-- Empty state -->
     <div id="empty-state" class="empty-state">
       <div class="empty-icon">📊</div>
@@ -201,11 +204,15 @@
 
     <!-- Card Header -->
     <div class="card-header">
-      <div class="card-player-info">
-        <h3 class="card-player-name"></h3>
-        <span class="card-player-meta"></span>
+      <div class="card-header-left">
+        <img class="player-headshot" src="" alt="" onerror="this.style.display='none'" />
+        <div class="card-player-info">
+          <h3 class="card-player-name"></h3>
+          <span class="card-player-meta"></span>
+        </div>
       </div>
       <div class="card-header-actions">
+        <span class="player-number"></span>
         <span class="games-played-badge"></span>
         <button class="btn-close-card" title="Remove">✕</button>
       </div>
@@ -217,6 +224,7 @@
       <button class="prop-tab" data-prop="rebounds">Rebounds</button>
       <button class="prop-tab" data-prop="assists">Assists</button>
       <button class="prop-tab" data-prop="pra">PRA</button>
+      <button class="prop-tab" data-prop="threes">3PM</button>
     </div>
 
     <!-- Stats Grid -->
@@ -296,28 +304,49 @@
 
     <!-- Charts -->
     <div class="charts-grid">
-      <div class="chart-wrap full-width">
-        <div class="chart-title">Recent Form — Last 10 Games</div>
-        <div class="chart-canvas-wrap h-160">
-          <canvas class="chart-recent-form"></canvas>
+
+      <!-- Recent Form + Game Log side by side -->
+      <div class="recent-form-row">
+        <div class="chart-wrap recent-form-chart">
+          <div class="chart-title">Recent Form — Last 10 Games</div>
+          <div class="chart-canvas-wrap h-160">
+            <canvas class="chart-recent-form"></canvas>
+          </div>
+        </div>
+        <div class="chart-wrap game-log-wrap">
+          <div class="chart-title">Game Log</div>
+          <div class="game-log-scroll">
+            <table class="game-log-table">
+              <thead><tr>
+                <th>Date</th><th>Opp</th><th>MIN</th>
+                <th class="game-log-stat-col">—</th>
+              </tr></thead>
+              <tbody class="game-log-body"></tbody>
+            </table>
+          </div>
         </div>
       </div>
-      <div class="chart-wrap full-width">
-        <div class="chart-title">Season Trend — Rolling 5-Game Average</div>
-        <div class="chart-canvas-wrap h-140">
-          <canvas class="chart-season-trend"></canvas>
+
+      <!-- Season Trend · Home/Away · Adjustments in one row -->
+      <div class="charts-bottom-row">
+        <div class="chart-wrap">
+          <div class="chart-title">Season Trend — Rolling 5-Game Avg</div>
+          <div class="chart-canvas-wrap h-120">
+            <canvas class="chart-season-trend"></canvas>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <div class="chart-title">Home vs Away</div>
+          <div class="chart-canvas-wrap h-120">
+            <canvas class="chart-home-away"></canvas>
+          </div>
+        </div>
+        <div class="chart-wrap adj-breakdown">
+          <div class="chart-title">Model Adjustments</div>
+          <div class="adj-items"></div>
         </div>
       </div>
-      <div class="chart-wrap half-width">
-        <div class="chart-title">Home vs Away</div>
-        <div class="chart-canvas-wrap h-130">
-          <canvas class="chart-home-away"></canvas>
-        </div>
-      </div>
-      <div class="chart-wrap half-width adj-breakdown">
-        <div class="chart-title">Model Adjustments</div>
-        <div class="adj-items"></div>
-      </div>
+
     </div>
 
     <!-- Add to Parlay -->

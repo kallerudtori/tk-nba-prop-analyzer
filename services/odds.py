@@ -22,6 +22,7 @@ MARKET_MAP = {
     "player_rebounds": "rebounds",
     "player_assists": "assists",
     "player_points_rebounds_assists": "pra",
+    "player_threes": "threes",
 }
 MARKETS_PARAM = ",".join(MARKET_MAP.keys())
 

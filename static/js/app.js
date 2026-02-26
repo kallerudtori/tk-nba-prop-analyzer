@@ -21,6 +21,7 @@ const AppState = {
   activeTeamTab: "home",   // "home" | "away"
   selectedPlayers: new Set(),
   analyses: {},            // playerId → full analysis object
+  activePlayerId: null,    // currently visible tab
 };
 
 /* ══════════════════════════════════════════════════════════════════════════ *
@@ -227,9 +228,13 @@ async function loadPlayerAnalysis(player, game, opponentTeamId, isHome) {
   AppState.selectedPlayers.add(player.player_id);
   updateEmptyState();
 
-  // Show loading card placeholder
+  // Show loading card placeholder and create tab immediately
   const placeholder = createLoadingCard(player);
+  placeholder.style.display = "none";  // hidden until tab switches to it
   document.getElementById("analysis-container").appendChild(placeholder);
+  createPlayerTab(player.player_id, player.name);
+  switchToPlayerTab(player.player_id);
+  placeholder.style.display = "block";
 
   const params = new URLSearchParams({
     opponent_team_id: opponentTeamId,
@@ -244,7 +249,9 @@ async function loadPlayerAnalysis(player, game, opponentTeamId, isHome) {
     // Replace placeholder with full card
     placeholder.remove();
     const card = buildAnalysisCard(data.analysis);
+    card.style.display = "none";
     document.getElementById("analysis-container").appendChild(card);
+    switchToPlayerTab(player.player_id);
 
     // On mobile, jump to the Analysis tab automatically
     mobileActivatePanel("main-panel");
@@ -269,7 +276,9 @@ async function loadPlayerAnalysis(player, game, opponentTeamId, isHome) {
 
   } catch (err) {
     placeholder.remove();
+    removePlayerTab(player.player_id);
     AppState.selectedPlayers.delete(player.player_id);
+    delete AppState.analyses[player.player_id];
     updateEmptyState();
     updateRosterSelection(player.player_id, false);
     showToast(`Error loading ${player.name}: ${err.message}`, "error");
@@ -289,6 +298,19 @@ function buildAnalysisCard(analysis) {
   card.querySelector(".card-player-name").textContent = player.name;
   card.querySelector(".card-player-meta").textContent = `${player.games_played} games played this season`;
   card.querySelector(".games-played-badge").textContent = `${player.games_played} GP`;
+
+  // Headshot
+  const headshot = card.querySelector(".player-headshot");
+  if (headshot && player.headshot_url) {
+    headshot.src = player.headshot_url;
+    headshot.alt = player.name;
+  }
+
+  // Jersey number
+  const jerseyEl = card.querySelector(".player-number");
+  if (jerseyEl && player.jersey_number) {
+    jerseyEl.textContent = `#${player.jersey_number}`;
+  }
 
   // Close button
   card.querySelector(".btn-close-card").addEventListener("click", () => {
@@ -394,12 +416,98 @@ function updateCardForProp(card, analysis, propKey) {
     : "No DK odds available";
   addBtn.disabled = !prop.has_odds;
 
+  // Game log table
+  const line = prop.has_odds ? prop.line : null;
+  renderGameLogTable(card, analysis.chart_data.last_10_games, propKey, line);
+
   // Destroy old charts then re-render (prop switch)
   destroyPlayerCharts(player.id);
   // rAF ensures canvases are in DOM before Chart.js touches them
   requestAnimationFrame(() => {
     renderAllCharts(card, player.id, propKey, analysis);
   });
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ *
+ *  Player Tabs                                                               *
+ * ══════════════════════════════════════════════════════════════════════════ */
+function createPlayerTab(playerId, playerName) {
+  const tabs = document.getElementById("player-tabs");
+  if (!tabs) return;
+  // Don't create duplicate tab
+  if (tabs.querySelector(`[data-player-id="${playerId}"]`)) return;
+  const btn = document.createElement("button");
+  btn.className = "player-tab";
+  btn.dataset.playerId = playerId;
+  btn.innerHTML = `<span class="tab-name">${playerName}</span><span class="tab-close" title="Remove">✕</span>`;
+  btn.addEventListener("click", e => {
+    if (e.target.classList.contains("tab-close")) {
+      removePlayerCard(playerId);
+    } else {
+      switchToPlayerTab(playerId);
+    }
+  });
+  tabs.appendChild(btn);
+  tabs.classList.remove("hidden");
+}
+
+function switchToPlayerTab(playerId) {
+  document.querySelectorAll(".analysis-card").forEach(c => {
+    c.style.display = "none";
+  });
+  const card = document.getElementById(`card-${playerId}`);
+  if (card) card.style.display = "block";
+
+  document.querySelectorAll(".player-tab").forEach(t => {
+    t.classList.toggle("active", String(t.dataset.playerId) === String(playerId));
+  });
+  AppState.activePlayerId = playerId;
+}
+
+function removePlayerTab(playerId) {
+  const tab = document.querySelector(`.player-tab[data-player-id="${playerId}"]`);
+  if (tab) tab.remove();
+
+  const remaining = document.querySelectorAll(".player-tab");
+  const tabs = document.getElementById("player-tabs");
+  if (!remaining.length) {
+    if (tabs) tabs.classList.add("hidden");
+    AppState.activePlayerId = null;
+  } else if (String(AppState.activePlayerId) === String(playerId)) {
+    // Activate the last remaining tab
+    switchToPlayerTab(remaining[remaining.length - 1].dataset.playerId);
+  }
+}
+
+/* ── Game Log Table ───────────────────────────────────────────────────────── */
+function renderGameLogTable(card, last10Games, propKey, line) {
+  const statKey = _propToStatKey(propKey);
+  const statLabels = { pts: "PTS", reb: "REB", ast: "AST", pra: "PRA", threes: "3PM" };
+
+  // Update column header
+  const colHeader = card.querySelector(".game-log-stat-col");
+  if (colHeader) colHeader.textContent = statLabels[statKey] || "—";
+
+  const tbody = card.querySelector(".game-log-body");
+  if (!tbody) return;
+
+  // Reverse so most recent game is first
+  const games = [...last10Games].reverse();
+  tbody.innerHTML = games.map(g => {
+    const val  = statKey === "threes" ? (g.fg3m ?? 0) : (g[statKey] ?? 0);
+    const parts = (g.matchup || "").split(/\s+/);
+    const opp  = parts[parts.length - 1].substring(0, 3).toUpperCase();
+    const ha   = (g.matchup || "").includes("vs.") ? "vs" : "@";
+    const cls  = line != null ? (val > line ? "over" : "under") : "";
+    const date = (g.date || "").replace(/,\s*\d{4}/, "");
+    const mins = Math.round(g.min ?? 0);
+    return `<tr>
+      <td>${date}</td>
+      <td>${ha} ${opp}</td>
+      <td>${mins}</td>
+      <td class="${cls}">${val}</td>
+    </tr>`;
+  }).join("");
 }
 
 /* ── Remove player card ───────────────────────────────────────────────────── */
@@ -412,6 +520,7 @@ function removePlayerCard(playerId) {
   AppState.selectedPlayers.delete(playerId);
   delete AppState.analyses[playerId];
 
+  removePlayerTab(playerId);
   updateEmptyState();
   updateRosterSelection(playerId, false);
 }
@@ -466,9 +575,11 @@ async function apiFetch(url, options = {}) {
 function updateEmptyState() {
   const empty     = document.getElementById("empty-state");
   const container = document.getElementById("analysis-container");
+  const tabs      = document.getElementById("player-tabs");
   const hasCards  = AppState.selectedPlayers.size > 0;
   empty.style.display     = hasCards ? "none" : "flex";
-  container.style.display = hasCards ? "flex" : "none";
+  container.style.display = hasCards ? "block" : "none";
+  if (tabs) tabs.classList.toggle("hidden", !hasCards);
 }
 
 function updateRosterSelection(playerId, selected) {
@@ -487,12 +598,12 @@ function pct(prob) {
 }
 
 function _propToStatKey(prop) {
-  const map = { points: "pts", rebounds: "reb", assists: "ast", pra: "pra" };
+  const map = { points: "pts", rebounds: "reb", assists: "ast", pra: "pra", threes: "threes" };
   return map[prop] ?? "pts";
 }
 
 function _propLabel(prop) {
-  const map = { points: "PTS", rebounds: "REB", assists: "AST", pra: "PRA" };
+  const map = { points: "PTS", rebounds: "REB", assists: "AST", pra: "PRA", threes: "3PM" };
   return map[prop] ?? prop.toUpperCase();
 }
 

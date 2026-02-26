@@ -129,7 +129,7 @@ def player_analysis(player_id):
 
         # ── Combine ────────────────────────────────────────────────────
         props = {}
-        for prop_key in ("points", "rebounds", "assists", "pra"):
+        for prop_key in ("points", "rebounds", "assists", "pra", "threes"):
             proj = dict(projections[prop_key])  # copy
 
             if has_odds and odds_data and prop_key in odds_data:
@@ -175,6 +175,9 @@ def player_analysis(player_id):
                 "name": stats["name"],
                 "team_id": stats.get("team_id"),
                 "games_played": stats["games_played"],
+                "jersey_number": stats.get("jersey_number", ""),
+                "headshot_url": f"https://cdn.nba.com/headshots/nba/latest/260x190/{player_id}.png",
+                "is_back_to_back": stats.get("is_back_to_back", False),
             },
             "stats": {
                 "season_avg": stats["season_avg"],

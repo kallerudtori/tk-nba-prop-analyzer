@@ -246,7 +246,7 @@ function renderBestPicks() {
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 function _propLabel(prop) {
-  const map = { points: "PTS", rebounds: "REB", assists: "AST", pra: "PRA" };
+  const map = { points: "PTS", rebounds: "REB", assists: "AST", pra: "PRA", threes: "3PM" };
   return map[prop] ?? prop.toUpperCase();
 }
 

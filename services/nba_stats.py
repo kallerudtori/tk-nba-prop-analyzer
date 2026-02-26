@@ -4,6 +4,7 @@ Fetches and caches data from the nba_api library.
 Cache TTL: 1 hour for stats, 30 min for today's games/rosters.
 """
 
+import math
 import time
 import logging
 from datetime import datetime, timedelta
@@ -18,6 +19,18 @@ _EASTERN = pytz.timezone("America/New_York")
 def _today_et():
     """Return today's date in US/Eastern — safe on UTC-based cloud servers."""
     return datetime.now(_EASTERN).date()
+
+
+def _exp_decay_avg(vals, decay: float = 0.07) -> float:
+    """
+    Exponential-decay weighted average.
+    Index 0 = most-recent game (weight 1.0); index k has weight e^(-decay*k).
+    """
+    if not len(vals):
+        return 0.0
+    weights = [math.exp(-decay * k) for k in range(len(vals))]
+    return float(sum(w * v for w, v in zip(weights, vals)) / sum(weights))
+
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +185,7 @@ class NBAStatsService:
         from nba_api.stats.endpoints import commonplayerinfo, playergamelog
 
         try:
-            # ---- player name ----
+            # ---- player name + jersey number ----
             time.sleep(NBA_API_DELAY)
             info_ep = commonplayerinfo.CommonPlayerInfo(
                 player_id=player_id, timeout=30
@@ -184,6 +197,7 @@ class NBAStatsService:
                 else "Unknown"
             )
             team_id = int(info_df["TEAM_ID"].iloc[0]) if len(info_df) > 0 else 0
+            jersey_number = str(info_df["JERSEY"].iloc[0]).strip() if len(info_df) > 0 else ""
 
             # ---- game log ----
             time.sleep(NBA_API_DELAY)
@@ -195,8 +209,8 @@ class NBAStatsService:
             if df.empty:
                 raise ValueError(f"No game log for player {player_id}")
 
-            # Numeric coercion
-            for col in ["PTS", "REB", "AST", "OREB", "DREB", "FGA", "FG3A"]:
+            # Numeric coercion — FG3M added for threes metric
+            for col in ["PTS", "REB", "AST", "OREB", "DREB", "FGA", "FG3A", "FG3M"]:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
@@ -204,25 +218,44 @@ class NBAStatsService:
             df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
 
             # df is already sorted most-recent first
-            season_avg = self._calc_avg(df)
-            last_5_avg = self._calc_avg(df.head(5))
-            last_10_avg = self._calc_avg(df.head(10))
+            season_avg  = self._calc_avg(df)
+            last_5_avg  = self._calc_decay_avg(df.head(5))
+            last_10_avg = self._calc_decay_avg(df.head(10))
 
             home_df = df[df["MATCHUP"].str.contains(r"vs\.", na=False)]
             away_df = df[df["MATCHUP"].str.contains("@", na=False)]
             home_avg = self._calc_avg(home_df) if len(home_df) > 0 else season_avg
             away_avg = self._calc_avg(away_df) if len(away_df) > 0 else season_avg
 
+            # ── Back-to-back detection: did player play yesterday (ET)? ──
+            is_back_to_back = False
+            if not df.empty:
+                try:
+                    most_recent = datetime.strptime(
+                        df["GAME_DATE"].iloc[0].title(), "%b %d, %Y"
+                    ).date()
+                    is_back_to_back = (most_recent == (_today_et() - timedelta(days=1)))
+                except (ValueError, TypeError):
+                    is_back_to_back = False
+
+            # ── Minutes volatility (CV of last 10 games) ─────────────────
+            l10_min = df.head(10)["MIN"]
+            minutes_cv = (
+                round(float(l10_min.std() / l10_min.mean()), 3)
+                if l10_min.mean() > 0 else 0.0
+            )
+
             # Last 10 games data for charts (oldest→newest for x-axis)
             last_10_games = [
                 {
-                    "date": row["GAME_DATE"],
+                    "date":    row["GAME_DATE"],
                     "matchup": row["MATCHUP"],
-                    "pts": float(row["PTS"]),
-                    "reb": float(row["REB"]),
-                    "ast": float(row["AST"]),
-                    "pra": float(row["PRA"]),
-                    "min": float(row["MIN"]),
+                    "pts":  float(row["PTS"]),
+                    "reb":  float(row["REB"]),
+                    "ast":  float(row["AST"]),
+                    "pra":  float(row["PRA"]),
+                    "min":  float(row["MIN"]),
+                    "fg3m": float(row["FG3M"]),
                 }
                 for _, row in df.head(10).iloc[::-1].iterrows()
             ]
@@ -234,34 +267,39 @@ class NBAStatsService:
                 w = chron.iloc[max(0, i - 4) : i + 1]
                 season_games.append(
                     {
-                        "date": row["GAME_DATE"],
-                        "pts_r5": round(float(w["PTS"].mean()), 1),
-                        "reb_r5": round(float(w["REB"].mean()), 1),
-                        "ast_r5": round(float(w["AST"].mean()), 1),
-                        "pra_r5": round(float(w["PRA"].mean()), 1),
+                        "date":     row["GAME_DATE"],
+                        "pts_r5":   round(float(w["PTS"].mean()), 1),
+                        "reb_r5":   round(float(w["REB"].mean()), 1),
+                        "ast_r5":   round(float(w["AST"].mean()), 1),
+                        "pra_r5":   round(float(w["PRA"].mean()), 1),
+                        "fg3m_r5":  round(float(w["FG3M"].mean()), 1),
                     }
                 )
 
             std_devs = {
-                "pts": round(float(df["PTS"].std()), 2),
-                "reb": round(float(df["REB"].std()), 2),
-                "ast": round(float(df["AST"].std()), 2),
-                "pra": round(float(df["PRA"].std()), 2),
+                "pts":    round(float(df["PTS"].std()), 2),
+                "reb":    round(float(df["REB"].std()), 2),
+                "ast":    round(float(df["AST"].std()), 2),
+                "pra":    round(float(df["PRA"].std()), 2),
+                "threes": round(float(df["FG3M"].std()), 2),
             }
 
             result = {
-                "player_id": player_id,
-                "team_id": team_id,
-                "name": player_name,
-                "games_played": len(df),
-                "season_avg": season_avg,
-                "last_5_avg": last_5_avg,
-                "last_10_avg": last_10_avg,
-                "home_avg": home_avg,
-                "away_avg": away_avg,
-                "last_10_games": last_10_games,
-                "season_games": season_games,
-                "std_devs": std_devs,
+                "player_id":       player_id,
+                "team_id":         team_id,
+                "name":            player_name,
+                "jersey_number":   jersey_number,
+                "games_played":    len(df),
+                "is_back_to_back": is_back_to_back,
+                "minutes_cv":      minutes_cv,
+                "season_avg":      season_avg,
+                "last_5_avg":      last_5_avg,
+                "last_10_avg":     last_10_avg,
+                "home_avg":        home_avg,
+                "away_avg":        away_avg,
+                "last_10_games":   last_10_games,
+                "season_games":    season_games,
+                "std_devs":        std_devs,
             }
 
             self.cache.set(cache_key, result, timeout=3600)
@@ -273,13 +311,31 @@ class NBAStatsService:
     @staticmethod
     def _calc_avg(df: pd.DataFrame) -> dict:
         if df is None or df.empty:
-            return {"pts": 0.0, "reb": 0.0, "ast": 0.0, "pra": 0.0, "min": 0.0}
+            return {"pts": 0.0, "reb": 0.0, "ast": 0.0, "pra": 0.0, "min": 0.0, "threes": 0.0}
         return {
-            "pts": round(float(df["PTS"].mean()), 1),
-            "reb": round(float(df["REB"].mean()), 1),
-            "ast": round(float(df["AST"].mean()), 1),
-            "pra": round(float(df["PRA"].mean()), 1),
-            "min": round(float(df["MIN"].mean()), 1),
+            "pts":    round(float(df["PTS"].mean()), 1),
+            "reb":    round(float(df["REB"].mean()), 1),
+            "ast":    round(float(df["AST"].mean()), 1),
+            "pra":    round(float(df["PRA"].mean()), 1),
+            "min":    round(float(df["MIN"].mean()), 1),
+            "threes": round(float(df["FG3M"].mean()), 1),
+        }
+
+    @staticmethod
+    def _calc_decay_avg(df: pd.DataFrame, decay: float = 0.07) -> dict:
+        """
+        Exponential-decay weighted average. Most-recent game (index 0) is weighted highest.
+        Recency bias: game from 1 day ago weight ≈0.93, 5 games ago ≈0.70, 10 games ago ≈0.50.
+        """
+        if df is None or df.empty:
+            return {"pts": 0.0, "reb": 0.0, "ast": 0.0, "pra": 0.0, "min": 0.0, "threes": 0.0}
+        return {
+            "pts":    round(_exp_decay_avg(df["PTS"].values, decay), 1),
+            "reb":    round(_exp_decay_avg(df["REB"].values, decay), 1),
+            "ast":    round(_exp_decay_avg(df["AST"].values, decay), 1),
+            "pra":    round(_exp_decay_avg(df["PRA"].values, decay), 1),
+            "min":    round(_exp_decay_avg(df["MIN"].values, decay), 1),
+            "threes": round(_exp_decay_avg(df["FG3M"].values, decay), 1),
         }
 
     # ------------------------------------------------------------------ #
@@ -293,11 +349,12 @@ class NBAStatsService:
     def get_league_avg_defense(self) -> dict:
         all_stats = self._get_league_team_stats()
         if not all_stats:
-            return {"opp_pts": 115.0, "opp_reb": 44.5, "opp_ast": 25.5}
+            return {"opp_pts": 115.0, "opp_reb": 44.5, "opp_ast": 25.5, "opp_fg3m": 8.5}
         return {
-            "opp_pts": round(sum(t["opp_pts"] for t in all_stats) / len(all_stats), 1),
-            "opp_reb": round(sum(t["opp_reb"] for t in all_stats) / len(all_stats), 1),
-            "opp_ast": round(sum(t["opp_ast"] for t in all_stats) / len(all_stats), 1),
+            "opp_pts":  round(sum(t["opp_pts"]  for t in all_stats) / len(all_stats), 1),
+            "opp_reb":  round(sum(t["opp_reb"]  for t in all_stats) / len(all_stats), 1),
+            "opp_ast":  round(sum(t["opp_ast"]  for t in all_stats) / len(all_stats), 1),
+            "opp_fg3m": round(sum(t["opp_fg3m"] for t in all_stats) / len(all_stats), 1),
         }
 
     def _get_league_team_stats(self) -> list:
@@ -320,11 +377,12 @@ class NBAStatsService:
 
             stats = [
                 {
-                    "team_id": int(row["TEAM_ID"]),
+                    "team_id":   int(row["TEAM_ID"]),
                     "team_name": row["TEAM_NAME"],
-                    "opp_pts": float(row.get("OPP_PTS", 115.0)),
-                    "opp_reb": float(row.get("OPP_REB", 44.5)),
-                    "opp_ast": float(row.get("OPP_AST", 25.5)),
+                    "opp_pts":   float(row.get("OPP_PTS",  115.0)),
+                    "opp_reb":   float(row.get("OPP_REB",   44.5)),
+                    "opp_ast":   float(row.get("OPP_AST",   25.5)),
+                    "opp_fg3m":  float(row.get("OPP_FG3M",   8.5)),
                 }
                 for _, row in df.iterrows()
             ]

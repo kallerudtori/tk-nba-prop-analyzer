@@ -2,8 +2,8 @@
 Statistical Projection Model
 
 Weights:    Last-5  40% | Last-10  35% | Season  25%
-Adjustments: Opponent defense · Home/Away split · Minutes trend
-Confidence: based on sample size + coefficient of variation
+Adjustments: Opponent defense · Home/Away split · Minutes trend · Back-to-Back
+Confidence: based on sample size + coefficient of variation + minutes volatility
 """
 
 import math
@@ -20,9 +20,10 @@ W_L10 = 0.35
 W_SEASON = 0.25
 
 # ── Max adjustment caps ──────────────────────────────────────────────────────
-OPP_CAP = 0.15      # ±15 % opponent factor
-SPLIT_CAP = 0.10    # ±10 % home/away factor
-MIN_CAP = 0.15      # ±15 % minutes trend factor
+OPP_CAP = 0.15       # ±15 % opponent factor (pts/reb/ast/pra)
+OPP_CAP_3PM = 0.20   # ±20 % opponent factor for threes (higher variance)
+SPLIT_CAP = 0.10     # ±10 % home/away factor
+MIN_CAP = 0.15       # ±15 % minutes trend factor
 SPLIT_THRESHOLD = 0.05   # Only apply split if |factor-1| > 5 %
 MIN_THRESHOLD = 0.05     # Only apply min trend if |factor-1| > 5 %
 
@@ -41,12 +42,13 @@ class ProjectionModel:
         is_home: bool,
     ) -> dict:
         """
-        Returns projections for all four prop types:
+        Returns projections for all five prop types:
             {
                 'points':   { projection, std_dev, confidence, adjustments },
                 'rebounds': { ... },
                 'assists':  { ... },
                 'pra':      { ... },
+                'threes':   { ... },
             }
         """
         result = {}
@@ -55,6 +57,7 @@ class ProjectionModel:
             ("rebounds", "reb"),
             ("assists", "ast"),
             ("pra", "pra"),
+            ("threes", "threes"),
         ]:
             result[prop_key] = self._project_single(
                 player_stats,
@@ -146,15 +149,21 @@ class ProjectionModel:
             if abs(capped - 1.0) > MIN_THRESHOLD:
                 min_factor = capped
 
-        final = after_split * min_factor
+        after_min = after_split * min_factor
         adj["min_factor"] = round(min_factor, 3)
 
+        # ── Step 5: Back-to-back fatigue ─────────────────────────────────
+        b2b_factor = 0.96 if ps.get("is_back_to_back", False) else 1.0
+        final = after_min * b2b_factor
+        adj["b2b_factor"] = round(b2b_factor, 3)
+
         std_dev = ps["std_devs"].get(stat_key, 0.0)
+        minutes_cv = ps.get("minutes_cv", 0.0)
 
         return {
             "projection": round(final, 1),
             "std_dev": round(std_dev, 2),
-            "confidence": self._confidence(games_played, final, std_dev),
+            "confidence": self._confidence(games_played, final, std_dev, minutes_cv),
             "adjustments": adj,
         }
 
@@ -163,29 +172,48 @@ class ProjectionModel:
         """
         Compute how much the opponent allows relative to league average.
         PRA uses a weighted blend of the three sub-stats.
+        Threes use a wider cap (±20%) to reflect higher variance.
         """
         if stat_key == "pra":
             pts_f = _safe_ratio(opp_def.get("opp_pts", 0), lg_avg.get("opp_pts", 1))
             reb_f = _safe_ratio(opp_def.get("opp_reb", 0), lg_avg.get("opp_reb", 1))
             ast_f = _safe_ratio(opp_def.get("opp_ast", 0), lg_avg.get("opp_ast", 1))
             raw = pts_f * 0.50 + reb_f * 0.30 + ast_f * 0.20
+            return max(1 - OPP_CAP, min(1 + OPP_CAP, raw))
+        elif stat_key == "threes":
+            raw = _safe_ratio(opp_def.get("opp_fg3m", 0), lg_avg.get("opp_fg3m", 1))
+            return max(1 - OPP_CAP_3PM, min(1 + OPP_CAP_3PM, raw))
         else:
             opp_key_map = {"pts": "opp_pts", "reb": "opp_reb", "ast": "opp_ast"}
             opp_key = opp_key_map.get(stat_key, "opp_pts")
             raw = _safe_ratio(opp_def.get(opp_key, 0), lg_avg.get(opp_key, 1))
-
-        return max(1 - OPP_CAP, min(1 + OPP_CAP, raw))
+            return max(1 - OPP_CAP, min(1 + OPP_CAP, raw))
 
     @staticmethod
-    def _confidence(games_played: int, projection: float, std_dev: float) -> str:
+    def _confidence(
+        games_played: int,
+        projection: float,
+        std_dev: float,
+        minutes_cv: float = 0.0,
+    ) -> str:
         if games_played < 5 or projection <= 0:
             return "Low"
         cov = std_dev / projection  # coefficient of variation
         if games_played >= 20 and cov < 0.20:
-            return "High"
-        if games_played >= 10 and cov < 0.35:
-            return "Medium"
-        return "Low"
+            raw = "High"
+        elif games_played >= 10 and cov < 0.35:
+            raw = "Medium"
+        else:
+            raw = "Low"
+
+        # Downgrade one tier if playing time is volatile (high CV of minutes)
+        if minutes_cv > 0.25:
+            if raw == "High":
+                raw = "Medium"
+            elif raw == "Medium":
+                raw = "Low"
+
+        return raw
 
 
 # ── Utility ──────────────────────────────────────────────────────────────────

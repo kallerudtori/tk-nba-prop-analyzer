@@ -407,11 +407,51 @@ canvas { display: block; }
 
 .empty-state p { max-width: 380px; font-size: 0.88rem; line-height: 1.7; }
 
+/* ══════════════════════════ PLAYER TABS ════════════════════════════════════ */
+.player-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 14px 0;
+  flex-wrap: wrap;
+}
+
+.player-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px 6px 14px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.player-tab:hover { border-color: var(--border-light); color: var(--text-primary); }
+
+.player-tab.active {
+  background: var(--gold-bg);
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+.tab-close {
+  font-size: 0.7rem;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+  line-height: 1;
+}
+
+.player-tab:hover .tab-close,
+.player-tab.active .tab-close { opacity: 1; }
+
 /* ═══════════════════════════ ANALYSIS CARDS ════════════════════════════════ */
 .analysis-container {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+  display: block;
 }
 
 .analysis-card {
@@ -424,11 +464,31 @@ canvas { display: block; }
 /* Card Header */
 .card-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  padding: 16px 18px 14px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
+  gap: 12px;
+}
+
+.card-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.player-headshot {
+  width: 52px;
+  height: 38px;
+  object-fit: cover;
+  object-position: top center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  flex-shrink: 0;
 }
 
 .card-player-name { font-size: 1.05rem; font-weight: 700; }
@@ -440,10 +500,22 @@ canvas { display: block; }
   display: block;
 }
 
+.player-number {
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--gold);
+  background: var(--gold-bg);
+  border: 1px solid var(--gold-dim);
+  border-radius: 99px;
+  padding: 2px 8px;
+}
+
 .card-header-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .games-played-badge {
@@ -665,9 +737,72 @@ canvas { display: block; }
 
 /* Charts */
 .charts-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   padding: 16px;
+  gap: 14px;
+}
+
+/* Recent Form + Game Log side by side */
+.recent-form-row {
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+}
+
+.recent-form-row .recent-form-chart {
+  flex: 0 0 62%;
+}
+
+.recent-form-row .game-log-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Game Log Table */
+.game-log-scroll {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 190px;
+}
+
+.game-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.game-log-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.game-log-table tbody td {
+  padding: 5px 6px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+}
+
+.game-log-table tbody tr:last-child td { border-bottom: none; }
+
+.game-log-table tbody td.over  { color: var(--green); font-weight: 700; }
+.game-log-table tbody td.under { color: var(--red);   font-weight: 700; }
+
+/* Season Trend · Home/Away · Adjustments row */
+.charts-bottom-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 14px;
 }
 
@@ -677,9 +812,6 @@ canvas { display: block; }
   border-radius: var(--radius);
   padding: 12px;
 }
-
-.chart-wrap.full-width  { grid-column: 1 / -1; }
-.chart-wrap.half-width  { grid-column: span 1; }
 
 /* Chart.js REQUIRES a position:relative parent with a fixed height
    when maintainAspectRatio is false — otherwise the canvas expands forever. */
@@ -691,6 +823,7 @@ canvas { display: block; }
 .chart-canvas-wrap.h-160 { height: 160px; }
 .chart-canvas-wrap.h-140 { height: 140px; }
 .chart-canvas-wrap.h-130 { height: 130px; }
+.chart-canvas-wrap.h-120 { height: 120px; }
 
 .chart-canvas-wrap canvas {
   position: absolute;
@@ -1089,9 +1222,11 @@ canvas { display: block; }
   .quota-badge     { display: none !important; }
   .app-header      { padding: 0 14px; }
 
-  /* Analysis cards: single-column charts */
-  .charts-grid { grid-template-columns: 1fr; padding: 12px; gap: 10px; }
-  .chart-wrap.half-width { grid-column: auto; }
+  /* Analysis cards: stack all chart rows */
+  .charts-grid { padding: 12px; gap: 10px; }
+  .recent-form-row { flex-direction: column; }
+  .recent-form-row .recent-form-chart { flex: none; }
+  .charts-bottom-row { grid-template-columns: 1fr; }
 
   /* Stats row: 3 cols instead of 5, allow horizontal scroll */
   .stats-grid {

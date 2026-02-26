@@ -62,10 +62,11 @@ function _scaleBase() {
 
 /* ── Stat key → label / colour ───────────────────────────────────────────── */
 const PROP_META = {
-  points:   { label: "PTS", rollingKey: "pts_r5", gameKey: "pts", color: C.blue },
-  rebounds: { label: "REB", rollingKey: "reb_r5", gameKey: "reb", color: C.green },
-  assists:  { label: "AST", rollingKey: "ast_r5", gameKey: "ast", color: C.gold },
-  pra:      { label: "PRA", rollingKey: "pra_r5", gameKey: "pra", color: "#b48eff" },
+  points:   { label: "PTS", rollingKey: "pts_r5",  gameKey: "pts",  color: C.blue },
+  rebounds: { label: "REB", rollingKey: "reb_r5",  gameKey: "reb",  color: C.green },
+  assists:  { label: "AST", rollingKey: "ast_r5",  gameKey: "ast",  color: C.gold },
+  pra:      { label: "PRA", rollingKey: "pra_r5",  gameKey: "pra",  color: "#b48eff" },
+  threes:   { label: "3PM", rollingKey: "fg3m_r5", gameKey: "fg3m", color: "rgba(255,170,0,1)" },
 };
 
 /* ─────────────────────────────────────────────────────────────────────────── *
@@ -146,7 +147,21 @@ function renderRecentFormChart(canvasEl, playerId, propKey, last10Games, line, p
         },
         tooltip: {
           callbacks: {
-            label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y}`,
+            title: (items) => {
+              const g = last10Games[items[0]?.dataIndex];
+              if (!g) return items[0]?.label ?? "";
+              const isHome = g.matchup?.includes("vs.");
+              const parts  = (g.matchup || "").split(/\s+/);
+              const opp    = parts[parts.length - 1].substring(0, 3).toUpperCase();
+              return `${g.date}  ${isHome ? "vs" : "@"} ${opp}`;
+            },
+            label: (ctx) => {
+              const g = last10Games[ctx.dataIndex];
+              const mins = g ? Math.round(g.min) : "?";
+              if (ctx.datasetIndex === 0)
+                return ` ${ctx.dataset.label}: ${ctx.parsed.y}  (${mins} min)`;
+              return ` ${ctx.dataset.label}: ${ctx.parsed.y}`;
+            },
           },
         },
       },
@@ -170,7 +185,7 @@ function renderSeasonTrendChart(canvasEl, playerId, propKey, seasonGames) {
   // Gradient fill — use the wrapper's fixed height (140px) since the canvas
   // hasn't been sized by Chart.js yet at gradient-creation time.
   const ctx = canvasEl.getContext("2d");
-  const gradient = ctx.createLinearGradient(0, 0, 0, 140);
+  const gradient = ctx.createLinearGradient(0, 0, 0, 120);
   gradient.addColorStop(0,   meta.color + "55");
   gradient.addColorStop(1,   meta.color + "00");
 
@@ -363,6 +378,12 @@ function renderAdjBreakdown(container, adjustments) {
       label: "Minutes Trend",
       key: "min_factor",
       format: v => v === 1.0 ? "Neutral" : `${v > 1 ? "+" : ""}${((v - 1) * 100).toFixed(0)}%`,
+      isFactorKey: true,
+    },
+    {
+      label: "Back-to-Back",
+      key: "b2b_factor",
+      format: v => v < 1.0 ? "B2B (−4%)" : "—",
       isFactorKey: true,
     },
   ];
