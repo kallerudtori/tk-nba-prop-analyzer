@@ -110,6 +110,18 @@ function renderGames(games) {
     card.querySelector(".game-status").textContent =
       game.status_code === 1 ? "" : game.status_text;
 
+    // Show "No DK" indicator when odds API couldn't match this game
+    const dkBadge = card.querySelector(".dk-badge");
+    if (dkBadge) {
+      if (game.odds_event_id) {
+        dkBadge.textContent = "DK";
+        dkBadge.classList.add("dk-badge--ok");
+      } else {
+        dkBadge.textContent = "No DK";
+        dkBadge.classList.add("dk-badge--missing");
+      }
+    }
+
     card.addEventListener("click", () => handleGameClick(card, game));
     container.appendChild(card);
   });

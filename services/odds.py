@@ -185,16 +185,25 @@ class OddsService:
         s = unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode("ascii")
         return s.replace(".", "").lower().strip()
 
+    # Suffixes that should be skipped when doing last-name matching
+    _NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+
     @staticmethod
     def _names_match(desc: str, player: str) -> bool:
         desc_n   = OddsService._normalize_name(desc)
         player_n = OddsService._normalize_name(player)
         if desc_n == player_n:
             return True
-        # Last-name match
+        # Last-name match — skip trailing suffixes (Jr., II, etc.)
         d_parts = desc_n.split()
         p_parts = player_n.split()
-        if d_parts and p_parts and d_parts[-1] == p_parts[-1]:
+        d_last = d_parts[-1] if d_parts else ""
+        p_last = p_parts[-1] if p_parts else ""
+        if d_last in OddsService._NAME_SUFFIXES and len(d_parts) >= 2:
+            d_last = d_parts[-2]
+        if p_last in OddsService._NAME_SUFFIXES and len(p_parts) >= 2:
+            p_last = p_parts[-2]
+        if d_last and p_last and d_last == p_last and len(d_last) > 2:
             return True
         return player_n in desc_n or desc_n in player_n
 

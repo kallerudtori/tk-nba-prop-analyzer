@@ -298,12 +298,29 @@ canvas { display: block; }
   white-space: nowrap;
 }
 
-.game-status {
+.game-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   margin-top: 6px;
+}
+
+.game-status {
   font-size: 0.7rem;
   color: var(--text-muted);
-  text-align: center;
 }
+
+.dk-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 1px 5px;
+  border-radius: 99px;
+  line-height: 1.5;
+}
+.dk-badge--ok      { background: var(--green-bg); color: var(--green); border: 1px solid var(--green); }
+.dk-badge--missing { background: var(--red-bg);   color: var(--red);   border: 1px solid var(--red); }
 
 /* ═══════════════════════════ TEAM TABS ════════════════════════════════════ */
 .team-tabs {

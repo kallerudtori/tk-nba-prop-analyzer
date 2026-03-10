@@ -204,6 +204,43 @@ def player_analysis(player_id):
         return jsonify({"success": False, "error": str(exc)}), 500
 
 
+# ── Odds debug ────────────────────────────────────────────────────────────────
+
+@app.route("/api/debug/odds")
+def debug_odds():
+    """Diagnostic endpoint — exposes Odds API status, event matching, and key presence."""
+    result = {
+        "has_api_key": bool(odds_svc.api_key),
+        "api_key_prefix": odds_svc.api_key[:6] + "..." if odds_svc.api_key else None,
+        "events": [],
+        "error": None,
+    }
+    try:
+        events = odds_svc.get_nba_events(0)
+        result["events_count"] = len(events)
+
+        games = nba_svc.get_games(day_offset=0)
+        matched = 0
+        for game in games:
+            eid = odds_svc.match_game_to_event(
+                game["home_team"]["name"], game["away_team"]["name"], events
+            )
+            result["events"].append({
+                "game": f"{game['away_team']['name']} @ {game['home_team']['name']}",
+                "odds_event_id": eid,
+                "matched": eid is not None,
+            })
+            if eid:
+                matched += 1
+
+        result["games_matched"] = matched
+        result["games_total"] = len(games)
+    except Exception as exc:
+        result["error"] = str(exc)
+
+    return jsonify(result)
+
+
 # ── Odds refresh ──────────────────────────────────────────────────────────────
 
 @app.route("/api/odds/refresh", methods=["POST"])
