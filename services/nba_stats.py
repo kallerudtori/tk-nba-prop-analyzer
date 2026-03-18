@@ -70,7 +70,7 @@ class NBAStatsService:
     def get_games(self, day_offset: int = 0) -> list:
         """
         Fetch games for today (day_offset=0) or any offset (1=tomorrow, -1=yesterday).
-        Uses ScoreboardV2 which supports day_offset natively.
+        Uses ScoreboardV3 (ScoreboardV2 is deprecated for 2025-26 season).
         """
         today_et = _today_et()
         cache_key = f"games_{day_offset}_{today_et.isoformat()}"
@@ -78,58 +78,73 @@ class NBAStatsService:
         if cached is not None:
             return cached
 
-        from nba_api.stats.endpoints import scoreboardv2 as stats_sb
+        from nba_api.stats.endpoints import scoreboardv3
         from nba_api.stats.static import teams as nba_teams_static
 
         try:
             time.sleep(NBA_API_DELAY)
             target_date = (today_et + timedelta(days=day_offset)).isoformat()
-            sb = stats_sb.ScoreboardV2(
+            sb = scoreboardv3.ScoreboardV3(
                 game_date=target_date,
-                day_offset="0",
                 league_id="00",
                 timeout=30,
             )
-            header_df = sb.get_data_frames()[0]
+            dfs = sb.get_data_frames()
+            games_df = dfs[1]   # one row per game
+            teams_df = dfs[2]   # two rows per game (home + away teams)
 
-            # Build a quick id→team-info lookup from the static team list
+            # Build tricode→team-info lookup from static list
             all_teams = nba_teams_static.get_teams()
-            team_by_id = {t["id"]: t for t in all_teams}
+            team_by_tri = {t["abbreviation"].upper(): t for t in all_teams}
+
+            # Build wins/losses lookup: (gameId, teamId) → {wins, losses}
+            team_record: dict = {}
+            for _, row in teams_df.iterrows():
+                key = (str(row["gameId"]), int(row["teamId"]))
+                team_record[key] = {
+                    "wins":   int(row["wins"])   if pd.notna(row["wins"])   else None,
+                    "losses": int(row["losses"]) if pd.notna(row["losses"]) else None,
+                }
 
             games = []
-            for _, row in header_df.iterrows():
-                home_id = int(row["HOME_TEAM_ID"])
-                away_id = int(row["VISITOR_TEAM_ID"])
-                home_t = team_by_id.get(home_id, {})
-                away_t = team_by_id.get(away_id, {})
+            for _, row in games_df.iterrows():
+                game_id = str(row["gameId"])
+                # gameCode format: "20260318/GSWBOS" — last 6 chars = away(3)+home(3)
+                code     = str(row.get("gameCode", "")).split("/")[-1]
+                away_tri = code[:3].upper()
+                home_tri = code[3:].upper()
 
-                status_text = str(row.get("GAME_STATUS_TEXT", "")).strip()
-                # ScoreboardV2 gives ET tip time directly in GAME_STATUS_TEXT
-                # when the game hasn't started (e.g. "7:30 pm ET")
-                game_time = status_text if status_text else "TBD"
+                home_t  = team_by_tri.get(home_tri, {})
+                away_t  = team_by_tri.get(away_tri, {})
+                home_id = home_t.get("id")
+                away_id = away_t.get("id")
 
-                games.append(
-                    {
-                        "game_id": str(row["GAME_ID"]),
-                        "home_team": {
-                            "id": home_id,
-                            "name": home_t.get("full_name", f"Team {home_id}"),
-                            "abbreviation": home_t.get("abbreviation", "???"),
-                            "wins":   int(row["HOME_TEAM_WINS"])   if "HOME_TEAM_WINS"   in row.index else None,
-                            "losses": int(row["HOME_TEAM_LOSSES"])  if "HOME_TEAM_LOSSES"  in row.index else None,
-                        },
-                        "away_team": {
-                            "id": away_id,
-                            "name": away_t.get("full_name", f"Team {away_id}"),
-                            "abbreviation": away_t.get("abbreviation", "???"),
-                            "wins":   int(row["VISITOR_TEAM_WINS"])   if "VISITOR_TEAM_WINS"   in row.index else None,
-                            "losses": int(row["VISITOR_TEAM_LOSSES"])  if "VISITOR_TEAM_LOSSES"  in row.index else None,
-                        },
-                        "game_time": game_time,
-                        "status_text": status_text,
-                        "status_code": int(row.get("GAME_STATUS_ID", 1)),
-                    }
-                )
+                home_rec = team_record.get((game_id, home_id), {}) if home_id else {}
+                away_rec = team_record.get((game_id, away_id), {}) if away_id else {}
+
+                status_text = str(row.get("gameStatusText", "")).strip()
+                game_time   = status_text if status_text else "TBD"
+
+                games.append({
+                    "game_id": game_id,
+                    "home_team": {
+                        "id":           home_id,
+                        "name":         home_t.get("full_name", home_tri),
+                        "abbreviation": home_t.get("abbreviation", home_tri),
+                        "wins":         home_rec.get("wins"),
+                        "losses":       home_rec.get("losses"),
+                    },
+                    "away_team": {
+                        "id":           away_id,
+                        "name":         away_t.get("full_name", away_tri),
+                        "abbreviation": away_t.get("abbreviation", away_tri),
+                        "wins":         away_rec.get("wins"),
+                        "losses":       away_rec.get("losses"),
+                    },
+                    "game_time":   game_time,
+                    "status_text": status_text,
+                    "status_code": int(row.get("gameStatus", 1)),
+                })
 
             self.cache.set(cache_key, games, timeout=1800)
             return games
@@ -373,8 +388,8 @@ class NBAStatsService:
             time.sleep(NBA_API_DELAY)
             ep = leaguedashteamstats.LeagueDashTeamStats(
                 season=CURRENT_SEASON,
-                measure_type_nullable="Opponent",
-                per_mode_nullable="PerGame",
+                measure_type_detailed_defense="Opponent",
+                per_mode_detailed="PerGame",
                 timeout=30,
             )
             df = ep.get_data_frames()[0]
