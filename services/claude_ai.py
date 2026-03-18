@@ -39,7 +39,8 @@ def generate_game_analysis(context: dict) -> dict:
             spread    {home_point, home_price, away_point, away_price},
             total     {point, over_price, under_price},
             home_opp_pts, away_opp_pts,   (defense stats)
-            home_record, away_record       (W-L strings)
+            home_record, away_record,      (W-L strings)
+            home_b2b, away_b2b             (back-to-back bools, optional)
 
     Returns:
         {"analysis": str, "pick": str, "confidence": "low"|"medium"|"high"}
@@ -51,8 +52,8 @@ def generate_game_analysis(context: dict) -> dict:
     prompt = _build_prompt(context)
     try:
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=450,
+            model="claude-sonnet-4-6",
+            max_tokens=900,
             messages=[{"role": "user", "content": prompt}],
         )
         text = msg.content[0].text.strip()
@@ -90,9 +91,15 @@ def generate_top_pick(games: list) -> dict:
         tot = g.get("total")     or {}
         h_prob = round((ml.get("home_prob") or 0.5) * 100, 1)
         a_prob = round((ml.get("away_prob") or 0.5) * 100, 1)
+        b2b_flags = []
+        if g.get("home_b2b"):
+            b2b_flags.append(f"{g['home_team']} B2B")
+        if g.get("away_b2b"):
+            b2b_flags.append(f"{g['away_team']} B2B")
+        b2b_note = f"  💤 {', '.join(b2b_flags)}" if b2b_flags else ""
         lines_text += (
             f"{i}. {g['away_team']} ({g.get('away_record','')}) @ "
-            f"{g['home_team']} ({g.get('home_record','')})  {g.get('game_time','')}\n"
+            f"{g['home_team']} ({g.get('home_record','')})  {g.get('game_time','')}{b2b_note}\n"
             f"   ML: {g['away_team']} {_fmt_odds(ml.get('away_price'))} ({a_prob}%) | "
             f"{g['home_team']} {_fmt_odds(ml.get('home_price'))} ({h_prob}%)\n"
             f"   Spread: {g['away_team']} {_fmt_point(sp.get('away_point'))} | "
@@ -102,22 +109,30 @@ def generate_top_pick(games: list) -> dict:
             f"{g['home_team']} allows {g.get('home_opp_pts','?')} pts/g\n\n"
         )
 
-    prompt = f"""You are a sharp NBA betting analyst. Here are today's games:
+    prompt = f"""You are a sharp NBA betting analyst writing in an engaging expert style. Here are today's games:
 
-{lines_text}Choose the SINGLE best bet across all {len(games)} games — the one with the clearest edge considering implied probability, defensive matchup, and line value.
+{lines_text}Scan the full slate and choose the SINGLE best bet — the one with the clearest edge considering implied probability, defensive matchup, back-to-back fatigue, and line value. If no game has a strong edge, say so.
+
+Write your analysis in this style:
+- Opening hook: what stands out about this matchup or the slate overall
+- Key factors: pace, defense, fatigue (B2B), value vs. the number
+- THE PICK with a clear rationale — or "PASS" if the slate is chalk with no value
+- If PASS, name 1-2 player props you'd target instead
+
+Use a few relevant emojis (🏀 🎯 💤 ⚠️). Keep it punchy — 3-4 short paragraphs.
 
 Respond ONLY with valid JSON:
 {{
-  "game": "Away Team @ Home Team (the matchup you chose)",
-  "pick": "specific bet e.g. 'Boston Celtics -11.5' or 'OKC Thunder ML' or 'Under 213.5'",
+  "game": "Away Team @ Home Team (the matchup you chose, or 'Full Slate' if PASS)",
+  "pick": "specific bet e.g. 'Boston Celtics -11.5' or 'OKC Thunder ML' or 'Under 213.5' or 'PASS'",
   "confidence": "low|medium|high",
-  "analysis": "2-3 sentences explaining why this is the best bet on the slate today"
+  "analysis": "your full multi-paragraph analysis with emojis and line breaks between paragraphs"
 }}"""
 
     try:
         msg  = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=350,
+            model="claude-sonnet-4-6",
+            max_tokens=600,
             messages=[{"role": "user", "content": prompt}],
         )
         text  = msg.content[0].text.strip()
@@ -183,7 +198,8 @@ def _build_prompt(ctx: dict) -> str:
     away_ml   = _fmt_odds(ml.get("away_price"))
     home_sp   = _fmt_point(sp.get("home_point"))
     away_sp   = _fmt_point(sp.get("away_point"))
-    sp_price  = _fmt_odds(sp.get("home_price", -110))
+    home_sp_pr = _fmt_odds(sp.get("home_price", -110))
+    away_sp_pr = _fmt_odds(sp.get("away_price", -110))
     total_pt  = tot.get("point", "N/A")
     over_pr   = _fmt_odds(tot.get("over_price",  -110))
     under_pr  = _fmt_odds(tot.get("under_price", -110))
@@ -200,28 +216,46 @@ def _build_prompt(ctx: dict) -> str:
     rec_home = f" ({home_record})" if home_record else ""
     rec_away = f" ({away_record})" if away_record else ""
 
-    return f"""You are a sharp NBA betting analyst. Analyze this game and give a specific pick.
+    # Back-to-back flags
+    b2b_parts = []
+    if ctx.get("home_b2b"):
+        b2b_parts.append(f"💤 {home} is on a back-to-back")
+    if ctx.get("away_b2b"):
+        b2b_parts.append(f"💤 {away} is on a back-to-back")
+    b2b_line = "  |  ".join(b2b_parts) if b2b_parts else "No back-to-backs tonight"
+
+    home_sp_val = sp.get("home_point", 0) or 0
+    away_sp_val = sp.get("away_point", 0) or 0
+
+    return f"""You are a sharp NBA betting analyst writing in an engaging, authoritative style.
 
 Game: {away}{rec_away} @ {home}{rec_home}
-Time: {ctx.get("game_time", "TBD")}
+Tip-off: {ctx.get("game_time", "TBD")}
+Fatigue: {b2b_line}
 
 DraftKings Lines:
-- Moneyline: {away} {away_ml} | {home} {home_ml}
-- Spread:    {away} {away_sp} ({sp_price}) | {home} {home_sp} ({sp_price})
-- Total:     O/U {total_pt}  Over {over_pr} | Under {under_pr}
+- Moneyline:  {away} {away_ml} ({away_prob}% implied)  |  {home} {home_ml} ({home_prob}% implied)
+- Spread:     {away} {away_sp} ({away_sp_pr})  |  {home} {home_sp} ({home_sp_pr})
+- Total:      O/U {total_pt}  —  Over {over_pr}  |  Under {under_pr}
 
-Implied Win Probability (vig-inclusive):
-- {away}: {away_prob}%
-- {home}: {home_prob}%
+Defense (opp pts/g allowed — lower = tougher D):
+- {away}: {def_away} pts/g allowed
+- {home}: {def_home} pts/g allowed
 
-Defense (opponents' pts/game allowed — lower = better D):
-- {away}: {def_away} pts/g
-- {home}: {def_home} pts/g
+Write a sharp betting breakdown in this structure:
 
-Respond ONLY with a valid JSON object — no preamble, no markdown:
+**Opening:** 1-2 sentences on what makes this matchup worth attention — back-to-back situations, a notable line, or a key stylistic mismatch.
+
+**Analysis:** 2-3 sentences on the key factors: pace, defense, fatigue impact, home/road splits, and whether the implied probability reflects true edge.
+
+**🎯 THE PICK:** Give a specific bet recommendation — e.g. "{home} {_fmt_point(home_sp_val)}" or "{away} ML" or "Under {total_pt}" — with a 1-sentence rationale. OR, if the line is too tight/vig too high with no clear edge, write "PASS — no clear edge" and suggest 1-2 player props to target instead (e.g. "Target [Player] points over X.X").
+
+Use relevant emojis (🏀 🎯 💤 ⚠️ 🔥). Keep it punchy — 3 short paragraphs max. Separate paragraphs with \\n\\n.
+
+Respond ONLY with a valid JSON object — no preamble, no markdown fences:
 {{
-  "analysis": "3–4 sentences: key matchup factors, pace/defense edge, line value insight",
-  "pick": "specific recommendation — e.g. '{home} -{abs(sp.get('home_point', 0))}' or '{away} ML' or 'Under {total_pt}'",
+  "analysis": "your full multi-paragraph analysis with emojis and \\n\\n between paragraphs",
+  "pick": "specific bet e.g. '{home} {_fmt_point(home_sp_val)}' or '{away} ML' or 'Under {total_pt}' or 'PASS'",
   "confidence": "low|medium|high"
 }}"""
 

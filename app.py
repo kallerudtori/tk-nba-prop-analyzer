@@ -292,6 +292,7 @@ def api_game_analysis(event_id):
         home_opp_pts = away_opp_pts = None
         home_record  = away_record  = ""
         game_time    = "TBD"
+        home_b2b     = away_b2b = False
 
         if game:
             h_def = defense_by_id.get(game["home_team"]["id"], {})
@@ -306,6 +307,19 @@ def api_game_analysis(event_id):
             )
             game_time = game.get("game_time", "TBD")
 
+            # B2B detection: check if either team played yesterday
+            try:
+                yesterday_games = nba_svc.get_games(day_offset=day_offset - 1)
+                yesterday_ids = {
+                    tid
+                    for yg in yesterday_games
+                    for tid in (yg["home_team"]["id"], yg["away_team"]["id"])
+                }
+                home_b2b = game["home_team"]["id"] in yesterday_ids
+                away_b2b = game["away_team"]["id"] in yesterday_ids
+            except Exception:
+                pass
+
         context = {
             **lines,
             "game_time":     game_time,
@@ -313,6 +327,8 @@ def api_game_analysis(event_id):
             "away_opp_pts":  away_opp_pts,
             "home_record":   home_record,
             "away_record":   away_record,
+            "home_b2b":      home_b2b,
+            "away_b2b":      away_b2b,
         }
 
         analysis = generate_game_analysis(context)
@@ -347,6 +363,18 @@ def api_games_top_pick():
         all_defense   = nba_svc._get_league_team_stats()
         defense_by_id = {d["team_id"]: d for d in all_defense}
 
+        # B2B detection for the full slate
+        yesterday_ids: set = set()
+        try:
+            yesterday_games = nba_svc.get_games(day_offset=day_offset - 1)
+            yesterday_ids = {
+                tid
+                for yg in yesterday_games
+                for tid in (yg["home_team"]["id"], yg["away_team"]["id"])
+            }
+        except Exception:
+            pass
+
         games_ctx = []
         for game in games:
             eid = odds_svc.match_game_to_event(
@@ -364,6 +392,8 @@ def api_games_top_pick():
                 "away_opp_pts": round(a_def.get("opp_pts", 0), 1) if a_def else None,
                 "home_record":  f"{game['home_team'].get('wins','?')}-{game['home_team'].get('losses','?')}",
                 "away_record":  f"{game['away_team'].get('wins','?')}-{game['away_team'].get('losses','?')}",
+                "home_b2b":     game["home_team"]["id"] in yesterday_ids,
+                "away_b2b":     game["away_team"]["id"] in yesterday_ids,
             })
 
         if not games_ctx:

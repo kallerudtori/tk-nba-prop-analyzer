@@ -1589,6 +1589,11 @@ canvas { display: block; }
   font-size: 0.83rem;
   color: var(--text-secondary);
   line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.tp-analysis {
+  white-space: pre-wrap;
 }
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
