@@ -48,8 +48,20 @@ def game_lines_page():
 
 @app.route("/api/health")
 def health():
+    from datetime import date as dt_date
     quota = odds_svc.get_quota()
-    return jsonify({"status": "ok", "odds_quota": quota})
+    # Calculate days until the Odds API monthly quota resets (1st of next month)
+    today = dt_date.today()
+    if today.month == 12:
+        reset = dt_date(today.year + 1, 1, 1)
+    else:
+        reset = dt_date(today.year, today.month + 1, 1)
+    return jsonify({
+        "status": "ok",
+        "odds_quota": quota,
+        "quota_reset_days": (reset - today).days,
+        "quota_reset_date": reset.isoformat(),
+    })
 
 
 # ── Games ─────────────────────────────────────────────────────────────────────
@@ -309,6 +321,60 @@ def api_game_analysis(event_id):
 
     except Exception as exc:
         logger.error("api_game_analysis error event=%s: %s", event_id, exc, exc_info=True)
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+# ── Top Pick ──────────────────────────────────────────────────────────────────
+
+@app.route("/api/games/top-pick")
+def api_games_top_pick():
+    """Return the single best bet across today's slate (cached 1 h)."""
+    day_offset = request.args.get("day_offset", 0, type=int)
+    from datetime import datetime as _dt
+    import pytz as _pytz
+    _today = _dt.now(_pytz.timezone("America/New_York")).date()
+    cache_key = f"top_pick_{day_offset}_{_today.isoformat()}"
+    cached = cache.get(cache_key)
+    if cached:
+        return jsonify({"success": True, **cached})
+
+    try:
+        from services.claude_ai import generate_top_pick
+
+        games    = nba_svc.get_games(day_offset=day_offset)
+        events   = odds_svc.get_nba_events(day_offset=day_offset)
+        all_lines = odds_svc.get_all_game_lines(day_offset=day_offset)
+        all_defense   = nba_svc._get_league_team_stats()
+        defense_by_id = {d["team_id"]: d for d in all_defense}
+
+        games_ctx = []
+        for game in games:
+            eid = odds_svc.match_game_to_event(
+                game["home_team"]["name"], game["away_team"]["name"], events
+            )
+            lines = all_lines.get(eid) if eid else None
+            if not lines:
+                continue
+            h_def = defense_by_id.get(game["home_team"]["id"], {})
+            a_def = defense_by_id.get(game["away_team"]["id"], {})
+            games_ctx.append({
+                **lines,
+                "game_time":    game.get("game_time", "TBD"),
+                "home_opp_pts": round(h_def.get("opp_pts", 0), 1) if h_def else None,
+                "away_opp_pts": round(a_def.get("opp_pts", 0), 1) if a_def else None,
+                "home_record":  f"{game['home_team'].get('wins','?')}-{game['home_team'].get('losses','?')}",
+                "away_record":  f"{game['away_team'].get('wins','?')}-{game['away_team'].get('losses','?')}",
+            })
+
+        if not games_ctx:
+            return jsonify({"success": False, "error": "No games with lines"}), 404
+
+        result = generate_top_pick(games_ctx)
+        cache.set(cache_key, result, timeout=3600)
+        return jsonify({"success": True, **result})
+
+    except Exception as exc:
+        logger.error("api_games_top_pick error: %s", exc, exc_info=True)
         return jsonify({"success": False, "error": str(exc)}), 500
 
 

@@ -1306,6 +1306,67 @@ canvas { display: block; }
    GAME LINES PAGE
    ══════════════════════════════════════════════════════════════════════════ */
 
+/* ── Top Pick Banner ────────────────────────────────────────────────────── */
+.top-pick-banner {
+  background: linear-gradient(135deg, rgba(255,215,0,.07) 0%, rgba(77,171,247,.07) 100%);
+  border: 1px solid var(--gold-dim);
+  border-radius: var(--radius-lg);
+  padding: 18px 22px;
+  margin-bottom: 22px;
+}
+.tp-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.tp-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.tp-star  { color: var(--gold); font-size: 1rem; }
+.tp-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.tp-pick-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.tp-pick {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--gold);
+  letter-spacing: -0.02em;
+}
+.tp-game-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.tp-analysis {
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  line-height: 1.65;
+  margin: 0;
+}
+
+/* ── Team Logos ─────────────────────────────────────────────────────────── */
+.lc-logo {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+  margin-bottom: 4px;
+}
+
 /* ── Layout ─────────────────────────────────────────────────────────────── */
 .lines-main {
   max-width: 1280px;
@@ -1366,7 +1427,9 @@ canvas { display: block; }
 .lc-team {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 3px;
+  min-width: 80px;
 }
 .lc-team--away { align-items: flex-start; }
 .lc-team--home { align-items: flex-end; text-align: right; }

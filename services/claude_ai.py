@@ -67,6 +67,97 @@ def generate_game_analysis(context: dict) -> dict:
         return _rule_based_analysis(context)
 
 
+def generate_top_pick(games: list) -> dict:
+    """
+    Analyze all games and return the single best bet of the day.
+
+    Args:
+        games: list of context dicts (same shape as generate_game_analysis context),
+               each also has 'home_team' and 'away_team' string keys.
+
+    Returns:
+        {"game": str, "pick": str, "confidence": str, "analysis": str}
+    """
+    client = _get_client()
+    if client is None:
+        return _rule_based_top_pick(games)
+
+    # Condensed multi-game summary for Claude
+    lines_text = ""
+    for i, g in enumerate(games, 1):
+        ml  = g.get("moneyline") or {}
+        sp  = g.get("spread")    or {}
+        tot = g.get("total")     or {}
+        h_prob = round((ml.get("home_prob") or 0.5) * 100, 1)
+        a_prob = round((ml.get("away_prob") or 0.5) * 100, 1)
+        lines_text += (
+            f"{i}. {g['away_team']} ({g.get('away_record','')}) @ "
+            f"{g['home_team']} ({g.get('home_record','')})  {g.get('game_time','')}\n"
+            f"   ML: {g['away_team']} {_fmt_odds(ml.get('away_price'))} ({a_prob}%) | "
+            f"{g['home_team']} {_fmt_odds(ml.get('home_price'))} ({h_prob}%)\n"
+            f"   Spread: {g['away_team']} {_fmt_point(sp.get('away_point'))} | "
+            f"{g['home_team']} {_fmt_point(sp.get('home_point'))}\n"
+            f"   O/U: {tot.get('point','?')} | "
+            f"Defense: {g['away_team']} allows {g.get('away_opp_pts','?')} pts/g, "
+            f"{g['home_team']} allows {g.get('home_opp_pts','?')} pts/g\n\n"
+        )
+
+    prompt = f"""You are a sharp NBA betting analyst. Here are today's games:
+
+{lines_text}Choose the SINGLE best bet across all {len(games)} games — the one with the clearest edge considering implied probability, defensive matchup, and line value.
+
+Respond ONLY with valid JSON:
+{{
+  "game": "Away Team @ Home Team (the matchup you chose)",
+  "pick": "specific bet e.g. 'Boston Celtics -11.5' or 'OKC Thunder ML' or 'Under 213.5'",
+  "confidence": "low|medium|high",
+  "analysis": "2-3 sentences explaining why this is the best bet on the slate today"
+}}"""
+
+    try:
+        msg  = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=350,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text  = msg.content[0].text.strip()
+        start = text.find("{")
+        end   = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            return json.loads(text[start:end])
+        return {"game": "—", "pick": "—", "confidence": "low", "analysis": text}
+    except Exception as exc:
+        logger.error("Claude top-pick error: %s", exc)
+        return _rule_based_top_pick(games)
+
+
+def _rule_based_top_pick(games: list) -> dict:
+    """Pick the game with the strongest implied edge (highest max win probability)."""
+    best = None
+    best_score = 0.0
+    for g in games:
+        ml = g.get("moneyline") or {}
+        h  = ml.get("home_prob") or 0.5
+        a  = ml.get("away_prob") or 0.5
+        score = max(h, a)
+        if score > best_score:
+            best_score = score
+            best = g
+
+    if not best:
+        return {"game": "—", "pick": "—", "confidence": "low", "analysis": ""}
+
+    analysis = _rule_based_analysis(best)
+    home = best["home_team"]
+    away = best["away_team"]
+    return {
+        "game":       f"{away} @ {home}",
+        "pick":       analysis["pick"],
+        "confidence": analysis["confidence"],
+        "analysis":   analysis["analysis"],
+    }
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _fmt_odds(price) -> str:
@@ -162,14 +253,24 @@ def _rule_based_analysis(ctx: dict) -> dict:
         analysis   = (
             f"{home} is a heavy {_fmt_odds(ml.get('home_price'))} favorite at home "
             f"({home_prob:.0f}% implied win probability).{def_note} "
-            f"The spread of {_fmt_point(home_sp)} looks appropriate for a team of this caliber. "
+            f"The spread of {_fmt_point(home_sp)} offers much better value than the ML. "
             f"Back {home} to cover."
+        )
+    elif away_prob >= 68:
+        # Heavy away favorite — spread is better value than inflated ML price
+        pick       = f"{away} {_fmt_point(away_sp)}"
+        confidence = "high"
+        analysis   = (
+            f"{away} is a strong {_fmt_odds(ml.get('away_price'))} road favorite "
+            f"({away_prob:.0f}% implied).{def_note} "
+            f"The spread at {_fmt_point(away_sp)} offers far better value than the ML price. "
+            f"Back {away} to cover."
         )
     elif away_prob >= 52:
         pick       = f"{away} ML"
         confidence = "medium"
         analysis   = (
-            f"{away} enters as a road dog at {_fmt_odds(ml.get('away_price'))} "
+            f"{away} enters as a road underdog at {_fmt_odds(ml.get('away_price'))} "
             f"({away_prob:.0f}% implied), which may undervalue them.{def_note} "
             f"The moneyline offers better risk/reward than the spread here. "
             f"Consider {away} ML as a value play."

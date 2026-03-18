@@ -24,7 +24,7 @@
   <div class="header-right">
     <div id="quota-badge" class="quota-badge hidden">
       <span class="quota-icon">⚡</span>
-      <span id="quota-text">— calls left</span>
+      <span id="quota-text">—</span>
     </div>
   </div>
 </header>
@@ -32,6 +32,26 @@
 <!-- ═══════════════════════════ MAIN ══════════════════════════════════════════ -->
 <main class="lines-main">
 
+  <!-- ── Top Pick Banner ─────────────────────────────────────────────── -->
+  <div id="top-pick-banner" class="top-pick-banner hidden">
+    <div class="tp-loading hidden">
+      <span class="spinner"></span> Finding best bet…
+    </div>
+    <div class="tp-content hidden">
+      <div class="tp-header">
+        <span class="tp-star">★</span>
+        <span class="tp-title">Best Bet of the Day</span>
+        <span id="tp-confidence" class="lc-confidence-badge"></span>
+      </div>
+      <div class="tp-pick-row">
+        <span id="tp-pick" class="tp-pick"></span>
+        <span id="tp-game-label" class="tp-game-label"></span>
+      </div>
+      <p id="tp-analysis" class="tp-analysis"></p>
+    </div>
+  </div>
+
+  <!-- ── Toolbar ─────────────────────────────────────────────────────── -->
   <div class="lines-toolbar">
     <div class="day-tabs">
       <button class="day-tab active" data-offset="0">Today</button>
@@ -40,8 +60,8 @@
     <span id="games-count-badge" class="badge"></span>
   </div>
 
+  <!-- ── Games Grid ──────────────────────────────────────────────────── -->
   <div id="lines-container" class="lines-grid">
-    <!-- Skeleton placeholders -->
     <div class="skeleton-card"></div>
     <div class="skeleton-card"></div>
     <div class="skeleton-card"></div>
@@ -58,6 +78,7 @@
     <!-- Game Header -->
     <div class="lc-header">
       <div class="lc-team lc-team--away">
+        <img class="lc-logo away-logo" src="" alt="" onerror="this.style.display='none'" />
         <span class="lc-abbr away-abbr"></span>
         <span class="lc-fullname away-name"></span>
         <span class="lc-record away-record"></span>
@@ -67,6 +88,7 @@
         <span class="lc-at">@</span>
       </div>
       <div class="lc-team lc-team--home">
+        <img class="lc-logo home-logo" src="" alt="" onerror="this.style.display='none'" />
         <span class="lc-abbr home-abbr"></span>
         <span class="lc-fullname home-name"></span>
         <span class="lc-record home-record"></span>
