@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NBA Game Lines</title>
+  <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════ HEADER ═══════════════════════════════════════ -->
+<header class="app-header">
+  <div class="header-left">
+    <span class="logo-icon">🏀</span>
+    <h1 class="app-title">NBA Prop Analyzer</h1>
+    <span class="header-subtitle">2025–26 Season</span>
+  </div>
+  <div class="header-center">
+    <nav class="page-nav">
+      <a href="/"      class="page-nav-btn">Props</a>
+      <a href="/lines" class="page-nav-btn active">Game Lines</a>
+    </nav>
+  </div>
+  <div class="header-right">
+    <div id="quota-badge" class="quota-badge hidden">
+      <span class="quota-icon">⚡</span>
+      <span id="quota-text">— calls left</span>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════════════ MAIN ══════════════════════════════════════════ -->
+<main class="lines-main">
+
+  <div class="lines-toolbar">
+    <div class="day-tabs">
+      <button class="day-tab active" data-offset="0">Today</button>
+      <button class="day-tab" data-offset="1">Tomorrow</button>
+    </div>
+    <span id="games-count-badge" class="badge"></span>
+  </div>
+
+  <div id="lines-container" class="lines-grid">
+    <!-- Skeleton placeholders -->
+    <div class="skeleton-card"></div>
+    <div class="skeleton-card"></div>
+    <div class="skeleton-card"></div>
+    <div class="skeleton-card"></div>
+  </div>
+
+</main>
+
+<!-- ═══════════════════════════ TEMPLATES ════════════════════════════════════ -->
+
+<template id="tpl-lines-card">
+  <article class="lines-card">
+
+    <!-- Game Header -->
+    <div class="lc-header">
+      <div class="lc-team lc-team--away">
+        <span class="lc-abbr away-abbr"></span>
+        <span class="lc-fullname away-name"></span>
+        <span class="lc-record away-record"></span>
+      </div>
+      <div class="lc-center">
+        <span class="lc-time"></span>
+        <span class="lc-at">@</span>
+      </div>
+      <div class="lc-team lc-team--home">
+        <span class="lc-abbr home-abbr"></span>
+        <span class="lc-fullname home-name"></span>
+        <span class="lc-record home-record"></span>
+      </div>
+    </div>
+
+    <!-- Odds Table -->
+    <div class="lc-odds-table">
+      <div class="lc-odds-col">
+        <div class="lc-odds-label">Spread</div>
+        <div class="lc-odds-away spread-away"></div>
+        <div class="lc-odds-home spread-home"></div>
+      </div>
+      <div class="lc-odds-divider"></div>
+      <div class="lc-odds-col">
+        <div class="lc-odds-label">Moneyline</div>
+        <div class="lc-odds-away ml-away"></div>
+        <div class="lc-odds-home ml-home"></div>
+      </div>
+      <div class="lc-odds-divider"></div>
+      <div class="lc-odds-col">
+        <div class="lc-odds-label">Total</div>
+        <div class="lc-odds-over total-over"></div>
+        <div class="lc-odds-under total-under"></div>
+      </div>
+    </div>
+
+    <!-- No-lines notice (hidden by default) -->
+    <div class="lc-no-lines hidden">No DraftKings lines available yet.</div>
+
+    <!-- Analysis section -->
+    <div class="lc-analysis-section">
+      <button class="btn btn-outline btn-sm lc-analyze-btn">
+        ✦ Get Sharp Analysis
+      </button>
+      <div class="lc-analysis-body hidden">
+        <div class="lc-analysis-loading hidden">
+          <span class="spinner"></span> Analyzing…
+        </div>
+        <div class="lc-analysis-content">
+          <div class="lc-pick-row hidden">
+            <span class="lc-pick-label">Pick</span>
+            <span class="lc-pick-value"></span>
+            <span class="lc-confidence-badge"></span>
+          </div>
+          <p class="lc-analysis-text"></p>
+        </div>
+      </div>
+    </div>
+
+  </article>
+</template>
+
+<script src="/static/js/lines.js"></script>
+</body>
+</html>

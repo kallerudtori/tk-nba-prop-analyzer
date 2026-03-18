@@ -215,6 +215,107 @@ class OddsService:
         return round(abs(american_odds) / (abs(american_odds) + 100), 4)
 
     # ------------------------------------------------------------------ #
+    #  Game Lines (moneyline / spread / total)                            #
+    # ------------------------------------------------------------------ #
+
+    def get_all_game_lines(self, day_offset: int = 0) -> dict:
+        """
+        Fetch DraftKings moneyline, spread, and total for all games in one call.
+        Returns a dict keyed by event_id.
+        """
+        eastern = pytz.timezone("America/New_York")
+        today_et = datetime.now(eastern).date()
+        target_local = today_et + timedelta(days=day_offset)
+
+        day_start_et = eastern.localize(datetime.combine(target_local, dt_time(0, 0)))
+        day_end_et   = day_start_et + timedelta(days=1)
+        commence_from = day_start_et.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        commence_to   = day_end_et.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        cache_key = f"game_lines_{target_local.isoformat()}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            resp = requests.get(
+                f"{ODDS_API_BASE}/sports/basketball_nba/odds",
+                params={
+                    "apiKey": self.api_key,
+                    "regions": "us",
+                    "markets": "h2h,spreads,totals",
+                    "oddsFormat": "american",
+                    "bookmakers": "draftkings",
+                    "commenceTimeFrom": commence_from,
+                    "commenceTimeTo": commence_to,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            self._store_quota(resp.headers)
+
+            result = {e["id"]: self._parse_game_lines(e) for e in resp.json()}
+            self.cache.set(cache_key, result, timeout=900)
+            return result
+        except requests.RequestException as exc:
+            logger.error("Odds API game lines error: %s", exc)
+            return {}
+
+    def _parse_game_lines(self, event: dict) -> dict:
+        """Extract moneyline, spread, and total from a raw event with odds."""
+        home_team = event.get("home_team", "")
+        away_team = event.get("away_team", "")
+        result = {
+            "home_team": home_team,
+            "away_team": away_team,
+            "moneyline": None,
+            "spread": None,
+            "total": None,
+        }
+        dk = next((b for b in event.get("bookmakers", []) if b["key"] == "draftkings"), None)
+        if not dk:
+            return result
+
+        for market in dk.get("markets", []):
+            key      = market["key"]
+            outcomes = market.get("outcomes", [])
+
+            if key == "h2h":
+                ml = {}
+                for o in outcomes:
+                    if o["name"] == home_team:
+                        ml["home_price"] = o["price"]
+                        ml["home_prob"]  = self._to_prob(o["price"])
+                    elif o["name"] == away_team:
+                        ml["away_price"] = o["price"]
+                        ml["away_prob"]  = self._to_prob(o["price"])
+                if ml:
+                    result["moneyline"] = ml
+
+            elif key == "spreads":
+                sp = {}
+                for o in outcomes:
+                    if o["name"] == home_team:
+                        sp["home_point"] = o.get("point", 0)
+                        sp["home_price"] = o["price"]
+                    elif o["name"] == away_team:
+                        sp["away_point"] = o.get("point", 0)
+                        sp["away_price"] = o["price"]
+                if sp:
+                    result["spread"] = sp
+
+            elif key == "totals":
+                over  = next((o for o in outcomes if o["name"] == "Over"),  None)
+                under = next((o for o in outcomes if o["name"] == "Under"), None)
+                if over:
+                    result["total"] = {
+                        "point":       over.get("point", 0),
+                        "over_price":  over["price"],
+                        "under_price": under["price"] if under else -110,
+                    }
+        return result
+
+    # ------------------------------------------------------------------ #
     #  Cache management & quota                                            #
     # ------------------------------------------------------------------ #
 

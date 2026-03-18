@@ -39,6 +39,11 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/lines")
+def game_lines_page():
+    return render_template("lines.html")
+
+
 # ── Health / Quota ────────────────────────────────────────────────────────────
 
 @app.route("/api/health")
@@ -201,6 +206,109 @@ def player_analysis(player_id):
 
     except Exception as exc:
         logger.error("player_analysis error player=%s: %s", player_id, exc, exc_info=True)
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+# ── Game Lines dashboard ──────────────────────────────────────────────────────
+
+@app.route("/api/games/lines")
+def api_games_lines():
+    """All games for the day with moneyline / spread / total and defense context."""
+    day_offset = request.args.get("day_offset", 0, type=int)
+    try:
+        games   = nba_svc.get_games(day_offset=day_offset)
+        events  = odds_svc.get_nba_events(day_offset=day_offset)
+        all_lines = odds_svc.get_all_game_lines(day_offset=day_offset)
+
+        all_defense   = nba_svc._get_league_team_stats()
+        defense_by_id = {d["team_id"]: d for d in all_defense}
+
+        result = []
+        for game in games:
+            eid  = odds_svc.match_game_to_event(
+                game["home_team"]["name"], game["away_team"]["name"], events
+            )
+            lines    = all_lines.get(eid) if eid else None
+            home_def = defense_by_id.get(game["home_team"]["id"], {})
+            away_def = defense_by_id.get(game["away_team"]["id"], {})
+
+            result.append({
+                **game,
+                "odds_event_id": eid,
+                "lines": lines,
+                "home_opp_pts": round(home_def.get("opp_pts", 0), 1) if home_def else None,
+                "away_opp_pts": round(away_def.get("opp_pts", 0), 1) if away_def else None,
+            })
+
+        return jsonify({"success": True, "games": result, "day_offset": day_offset})
+    except Exception as exc:
+        logger.error("api_games_lines error: %s", exc, exc_info=True)
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/api/game/<event_id>/analysis")
+def api_game_analysis(event_id):
+    """Generate a Claude write-up for a specific game (cached 1 h)."""
+    day_offset = request.args.get("day_offset", 0, type=int)
+
+    cache_key = f"game_analysis_{event_id}"
+    cached = cache.get(cache_key)
+    if cached:
+        return jsonify({"success": True, **cached})
+
+    try:
+        from services.claude_ai import generate_game_analysis
+
+        all_lines = odds_svc.get_all_game_lines(day_offset=day_offset)
+        lines     = all_lines.get(event_id)
+        if not lines:
+            return jsonify({"success": False, "error": "No lines found for this event"}), 404
+
+        games   = nba_svc.get_games(day_offset=day_offset)
+        events  = odds_svc.get_nba_events(day_offset=day_offset)
+        game    = next(
+            (g for g in games
+             if odds_svc.match_game_to_event(
+                 g["home_team"]["name"], g["away_team"]["name"], events
+             ) == event_id),
+            None,
+        )
+
+        all_defense   = nba_svc._get_league_team_stats()
+        defense_by_id = {d["team_id"]: d for d in all_defense}
+
+        home_opp_pts = away_opp_pts = None
+        home_record  = away_record  = ""
+        game_time    = "TBD"
+
+        if game:
+            h_def = defense_by_id.get(game["home_team"]["id"], {})
+            a_def = defense_by_id.get(game["away_team"]["id"], {})
+            home_opp_pts = round(h_def.get("opp_pts", 0), 1) if h_def else None
+            away_opp_pts = round(a_def.get("opp_pts", 0), 1) if a_def else None
+            home_record  = (
+                f"{game['home_team'].get('wins','?')}-{game['home_team'].get('losses','?')}"
+            )
+            away_record  = (
+                f"{game['away_team'].get('wins','?')}-{game['away_team'].get('losses','?')}"
+            )
+            game_time = game.get("game_time", "TBD")
+
+        context = {
+            **lines,
+            "game_time":     game_time,
+            "home_opp_pts":  home_opp_pts,
+            "away_opp_pts":  away_opp_pts,
+            "home_record":   home_record,
+            "away_record":   away_record,
+        }
+
+        analysis = generate_game_analysis(context)
+        cache.set(cache_key, analysis, timeout=3600)
+        return jsonify({"success": True, **analysis})
+
+    except Exception as exc:
+        logger.error("api_game_analysis error event=%s: %s", event_id, exc, exc_info=True)
         return jsonify({"success": False, "error": str(exc)}), 500
 
 
