@@ -459,4 +459,4 @@ def refresh_odds():
 if __name__ == "__main__":
     # preview_start injects PORT; fall back to FLASK_PORT then 5001
     port = int(os.getenv("PORT", os.getenv("FLASK_PORT", 5001)))
-    app.run(debug=True, host="0.0.0.0", port=port)
+    app.run(debug=True, use_reloader=False, host="0.0.0.0", port=port)
