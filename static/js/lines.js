@@ -225,8 +225,80 @@ function renderAnalysis(card, data) {
     const confBadge = card.querySelector(".lc-confidence-badge");
     confBadge.textContent = conf.charAt(0).toUpperCase() + conf.slice(1);
     confBadge.className   = `lc-confidence-badge conf-${conf}`;
+
+    // Show "I placed this bet" checkbox
+    const placeRow = card.querySelector(".lc-place-row");
+    const cb       = card.querySelector(".lc-placed-cb");
+    const label    = card.querySelector(".lc-place-label");
+    if (placeRow && cb) {
+      placeRow.classList.remove("hidden");
+      cb.addEventListener("change", async () => {
+        if (cb.checked) {
+          const today     = new Date().toISOString().slice(0, 10);
+          const awayAbbr  = card.querySelector(".away-abbr")?.textContent || "";
+          const homeAbbr  = card.querySelector(".home-abbr")?.textContent || "";
+          const gameLabel = `${awayAbbr} @ ${homeAbbr}`;
+          const pick      = data.pick || "";
+
+          // Best-effort parse of line from pick label (e.g. "Celtics -2.5" → line=2.5, over_under=home)
+          const lineMatch = pick.match(/([+-]?\d+\.?\d*)\s*$/);
+          const parsedLine = lineMatch ? Math.abs(parseFloat(lineMatch[1])) : null;
+          const ou = pick.toLowerCase().includes("over") ? "over"
+                   : pick.toLowerCase().includes("under") ? "under"
+                   : parsedLine !== null ? (parseFloat(lineMatch[1]) < 0 ? "home" : "away")
+                   : null;
+
+          try {
+            const res  = await fetch("/api/bets", {
+              method:  "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                bet_type:   "game_line",
+                pick_label: pick,
+                game_label: gameLabel,
+                game_date:  today,
+                line:       parsedLine,
+                over_under: ou,
+                odds:       -110,
+              }),
+            });
+            const json = await res.json();
+            if (!json.success) throw new Error(json.error || "API error");
+            cb.dataset.betId  = json.id;
+            label.textContent = "✓ Logged";
+            label.classList.add("lc-place-logged");
+          } catch (err) {
+            cb.checked = false;
+            showToast(`Failed to log bet: ${err.message}`, "error");
+          }
+        } else {
+          // Uncheck — remove the bet
+          const betId = cb.dataset.betId;
+          if (betId) {
+            try {
+              await fetch(`/api/bets/${betId}`, { method: "DELETE" });
+              delete cb.dataset.betId;
+              label.textContent = "I placed this bet";
+              label.classList.remove("lc-place-logged");
+            } catch (err) {
+              cb.checked = true;
+              showToast(`Failed to remove bet: ${err.message}`, "error");
+            }
+          }
+        }
+      });
+    }
   }
   card.querySelector(".lc-analysis-text").textContent = data.analysis || "";
+}
+
+function showToast(msg, type = "success") {
+  const t = document.createElement("div");
+  t.className = `toast toast-${type}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.classList.add("toast-show"), 10);
+  setTimeout(() => { t.classList.remove("toast-show"); setTimeout(() => t.remove(), 300); }, 3000);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ *

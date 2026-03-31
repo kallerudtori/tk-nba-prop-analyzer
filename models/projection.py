@@ -6,7 +6,9 @@ Adjustments: Opponent defense · Home/Away split · Minutes trend · Back-to-Bac
 Confidence: based on sample size + coefficient of variation + minutes volatility
 """
 
+import json
 import math
+import os
 from scipy import stats as scipy_stats
 
 
@@ -14,21 +16,45 @@ from scipy import stats as scipy_stats
 STRONG_VALUE = 2.5
 SLIGHT_VALUE = 1.0
 
-# ── Projection weights ───────────────────────────────────────────────────────
-W_L5 = 0.40
-W_L10 = 0.35
-W_SEASON = 0.25
+# ── Hardcoded defaults (overridden by weights_config.json if present) ────────
+_W_L5_DEFAULT     = 0.40
+_W_L10_DEFAULT    = 0.35
+_W_SEASON_DEFAULT = 0.25
+_OPP_CAP_DEFAULT     = 0.15
+_OPP_CAP_3PM_DEFAULT = 0.20
+_SPLIT_CAP_DEFAULT   = 0.10
 
-# ── Max adjustment caps ──────────────────────────────────────────────────────
-OPP_CAP = 0.15       # ±15 % opponent factor (pts/reb/ast/pra)
-OPP_CAP_3PM = 0.20   # ±20 % opponent factor for threes (higher variance)
-SPLIT_CAP = 0.10     # ±10 % home/away factor
+# ── Max adjustment caps (non-weight) ─────────────────────────────────────────
 MIN_CAP = 0.15       # ±15 % minutes trend factor
-SPLIT_THRESHOLD = 0.05   # Only apply split if |factor-1| > 5 %
-MIN_THRESHOLD = 0.05     # Only apply min trend if |factor-1| > 5 %
+SPLIT_THRESHOLD = 0.05
+MIN_THRESHOLD   = 0.05
+
+_CFG_PATH = os.path.join(os.path.dirname(__file__), "weights_config.json")
+
+
+def _load_weights() -> tuple:
+    """Load weights from weights_config.json, falling back to defaults."""
+    try:
+        with open(_CFG_PATH) as f:
+            cfg = json.load(f)
+        return (
+            float(cfg.get("W_L5",      _W_L5_DEFAULT)),
+            float(cfg.get("W_L10",     _W_L10_DEFAULT)),
+            float(cfg.get("W_SEASON",  _W_SEASON_DEFAULT)),
+            float(cfg.get("OPP_CAP",   _OPP_CAP_DEFAULT)),
+            float(cfg.get("OPP_CAP_3PM", _OPP_CAP_3PM_DEFAULT)),
+            float(cfg.get("SPLIT_CAP", _SPLIT_CAP_DEFAULT)),
+        )
+    except Exception:
+        return (_W_L5_DEFAULT, _W_L10_DEFAULT, _W_SEASON_DEFAULT,
+                _OPP_CAP_DEFAULT, _OPP_CAP_3PM_DEFAULT, _SPLIT_CAP_DEFAULT)
 
 
 class ProjectionModel:
+
+    def __init__(self):
+        (self.W_L5, self.W_L10, self.W_SEASON,
+         self.OPP_CAP, self.OPP_CAP_3PM, self.SPLIT_CAP) = _load_weights()
 
     # ------------------------------------------------------------------ #
     #  Public API                                                          #
@@ -111,7 +137,7 @@ class ProjectionModel:
 
         # ── Step 1: Weighted base ────────────────────────────────────────
         if games_played >= 10:
-            base = l5_avg * W_L5 + l10_avg * W_L10 + season_avg * W_SEASON
+            base = l5_avg * self.W_L5 + l10_avg * self.W_L10 + season_avg * self.W_SEASON
         elif games_played >= 5:
             base = l5_avg * 0.55 + season_avg * 0.45
         else:
@@ -132,7 +158,7 @@ class ProjectionModel:
         split_factor = 1.0
         if season_avg > 0 and split_avg > 0:
             raw = split_avg / season_avg
-            capped = max(1 - SPLIT_CAP, min(1 + SPLIT_CAP, raw))
+            capped = max(1 - self.SPLIT_CAP, min(1 + self.SPLIT_CAP, raw))
             if abs(capped - 1.0) > SPLIT_THRESHOLD:
                 split_factor = capped
 
@@ -167,8 +193,7 @@ class ProjectionModel:
             "adjustments": adj,
         }
 
-    @staticmethod
-    def _opp_factor(stat_key: str, opp_def: dict, lg_avg: dict) -> float:
+    def _opp_factor(self, stat_key: str, opp_def: dict, lg_avg: dict) -> float:
         """
         Compute how much the opponent allows relative to league average.
         PRA uses a weighted blend of the three sub-stats.
@@ -179,15 +204,15 @@ class ProjectionModel:
             reb_f = _safe_ratio(opp_def.get("opp_reb", 0), lg_avg.get("opp_reb", 1))
             ast_f = _safe_ratio(opp_def.get("opp_ast", 0), lg_avg.get("opp_ast", 1))
             raw = pts_f * 0.50 + reb_f * 0.30 + ast_f * 0.20
-            return max(1 - OPP_CAP, min(1 + OPP_CAP, raw))
+            return max(1 - self.OPP_CAP, min(1 + self.OPP_CAP, raw))
         elif stat_key == "threes":
             raw = _safe_ratio(opp_def.get("opp_fg3m", 0), lg_avg.get("opp_fg3m", 1))
-            return max(1 - OPP_CAP_3PM, min(1 + OPP_CAP_3PM, raw))
+            return max(1 - self.OPP_CAP_3PM, min(1 + self.OPP_CAP_3PM, raw))
         else:
             opp_key_map = {"pts": "opp_pts", "reb": "opp_reb", "ast": "opp_ast"}
             opp_key = opp_key_map.get(stat_key, "opp_pts")
             raw = _safe_ratio(opp_def.get(opp_key, 0), lg_avg.get(opp_key, 1))
-            return max(1 - OPP_CAP, min(1 + OPP_CAP, raw))
+            return max(1 - self.OPP_CAP, min(1 + self.OPP_CAP, raw))
 
     @staticmethod
     def _confidence(

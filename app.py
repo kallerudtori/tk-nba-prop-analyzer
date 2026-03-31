@@ -26,10 +26,13 @@ logger = logging.getLogger(__name__)
 from services.nba_stats import NBAStatsService
 from services.odds import OddsService
 from models.projection import ProjectionModel
+from database.db import init_db
 
 nba_svc = NBAStatsService(cache)
 odds_svc = OddsService(cache)
 model = ProjectionModel()
+
+init_db()
 
 
 # ── Views ─────────────────────────────────────────────────────────────────────
@@ -452,6 +455,212 @@ def refresh_odds():
     event_id = request.json.get("event_id") if request.is_json else None
     odds_svc.clear_cache(event_id)
     return jsonify({"success": True, "message": "Odds cache cleared"})
+
+
+# ── Bets views ────────────────────────────────────────────────────────────────
+
+@app.route("/settle")
+def settle_page():
+    return render_template("settle.html")
+
+
+# ── Bets API ──────────────────────────────────────────────────────────────────
+
+@app.route("/api/bets", methods=["POST"])
+def create_bet():
+    from database.db import get_conn
+    data = request.get_json(force=True)
+    required = ("bet_type", "pick_label", "game_date")
+    for field in required:
+        if not data.get(field):
+            return jsonify({"success": False, "error": f"Missing field: {field}"}), 400
+    conn = get_conn()
+    cur = conn.execute("""
+        INSERT INTO bets
+          (bet_type, player_name, prop_type, line, over_under, odds,
+           model_projection, model_edge, model_confidence, model_prob_over,
+           game_label, game_date, pick_label)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (
+        data.get("bet_type", "prop"),
+        data.get("player_name"),
+        data.get("prop_type"),
+        data.get("line"),
+        data.get("over_under"),
+        data.get("odds"),
+        data.get("model_projection"),
+        data.get("model_edge"),
+        data.get("model_confidence"),
+        data.get("model_prob_over"),
+        data.get("game_label"),
+        data.get("game_date"),
+        data.get("pick_label"),
+    ))
+    conn.commit()
+    bet_id = cur.lastrowid
+    conn.close()
+    return jsonify({"success": True, "id": bet_id}), 201
+
+
+@app.route("/api/bets", methods=["GET"])
+def list_bets():
+    from database.db import get_conn
+    status   = request.args.get("status")
+    bet_type = request.args.get("bet_type")
+
+    conn  = get_conn()
+    query = "SELECT * FROM bets WHERE 1=1"
+    params: list = []
+    if status:
+        query += " AND status = ?"; params.append(status)
+    if bet_type:
+        query += " AND bet_type = ?"; params.append(bet_type)
+    query += " ORDER BY created_at DESC"
+
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return jsonify({"success": True, "bets": [dict(r) for r in rows]})
+
+
+@app.route("/api/bets/<int:bet_id>/settle", methods=["PATCH"])
+def settle_bet(bet_id):
+    from database.db import get_conn
+    data = request.get_json(force=True)
+
+    conn = get_conn()
+    row  = conn.execute("SELECT * FROM bets WHERE id = ?", (bet_id,)).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"success": False, "error": "Bet not found"}), 404
+
+    # Determine status
+    explicit_status = data.get("status")
+    actual_value    = data.get("actual_value")
+
+    if explicit_status in ("won", "lost", "void"):
+        status = explicit_status
+    elif actual_value is not None and row["line"] is not None and row["over_under"]:
+        ou = row["over_under"].lower()
+        if ou == "over":
+            status = "won" if float(actual_value) > float(row["line"]) else "lost"
+        elif ou == "under":
+            status = "won" if float(actual_value) < float(row["line"]) else "lost"
+        else:
+            status = explicit_status or "pending"
+    else:
+        conn.close()
+        return jsonify({"success": False, "error": "Provide actual_value or explicit status"}), 400
+
+    conn.execute(
+        "UPDATE bets SET status=?, actual_value=?, settled_at=CURRENT_TIMESTAMP WHERE id=?",
+        (status, actual_value, bet_id),
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True, "status": status})
+
+
+@app.route("/api/bets/<int:bet_id>", methods=["DELETE"])
+def delete_bet(bet_id):
+    from database.db import get_conn
+    conn = get_conn()
+    conn.execute("DELETE FROM bets WHERE id = ?", (bet_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
+
+
+@app.route("/api/bets/accuracy")
+def bets_accuracy():
+    from database.db import get_conn
+    conn  = get_conn()
+    rows  = conn.execute(
+        "SELECT * FROM bets WHERE status IN ('won','lost')"
+    ).fetchall()
+    conn.close()
+
+    settled = [dict(r) for r in rows]
+    total   = len(settled)
+
+    if total == 0:
+        return jsonify({"success": True, "total": 0, "hit_rate": None,
+                        "by_prop": {}, "by_confidence": {}, "edge_calibration": [],
+                        "bias_by_prop": {}, "rolling_hit_rate": []})
+
+    wins = sum(1 for r in settled if r["status"] == "won")
+    hit_rate = round(wins / total * 100, 1)
+
+    # By prop type (prop bets only)
+    from collections import defaultdict
+    by_prop: dict = defaultdict(lambda: {"wins": 0, "total": 0})
+    by_conf: dict = defaultdict(lambda: {"wins": 0, "total": 0})
+    edge_cal: list = []
+    bias_by_prop: dict = defaultdict(list)
+
+    for r in settled:
+        hit = 1 if r["status"] == "won" else 0
+        if r["prop_type"]:
+            by_prop[r["prop_type"]]["wins"]  += hit
+            by_prop[r["prop_type"]]["total"] += 1
+        if r["model_confidence"]:
+            by_conf[r["model_confidence"]]["wins"]  += hit
+            by_conf[r["model_confidence"]]["total"] += 1
+        if r["model_edge"] is not None:
+            edge_cal.append({"edge": r["model_edge"], "hit": hit})
+        if r["prop_type"] and r["model_projection"] is not None and r["actual_value"] is not None:
+            bias_by_prop[r["prop_type"]].append(r["model_projection"] - r["actual_value"])
+
+    prop_hr = {k: round(v["wins"] / v["total"] * 100, 1) for k, v in by_prop.items()}
+    conf_hr = {k: round(v["wins"] / v["total"] * 100, 1) for k, v in by_conf.items()}
+    bias    = {k: round(sum(v) / len(v), 2) for k, v in bias_by_prop.items()}
+
+    # Rolling 10-bet hit rate (chronological order)
+    chron   = sorted(settled, key=lambda r: r["settled_at"] or "")
+    rolling: list = []
+    for i in range(len(chron)):
+        window = chron[max(0, i - 9): i + 1]
+        rate   = sum(1 for x in window if x["status"] == "won") / len(window) * 100
+        rolling.append({"index": i + 1, "rate": round(rate, 1)})
+
+    return jsonify({
+        "success":        True,
+        "total":          total,
+        "hit_rate":       hit_rate,
+        "by_prop":        prop_hr,
+        "by_confidence":  conf_hr,
+        "edge_calibration": edge_cal,
+        "bias_by_prop":   bias,
+        "rolling_hit_rate": rolling,
+    })
+
+
+# ── Model weights ─────────────────────────────────────────────────────────────
+
+@app.route("/api/model/weights")
+def get_model_weights():
+    import json, os
+    cfg_path = os.path.join(os.path.dirname(__file__), "models", "weights_config.json")
+    defaults = {"W_L5": 0.40, "W_L10": 0.35, "W_SEASON": 0.25,
+                "OPP_CAP": 0.15, "OPP_CAP_3PM": 0.20, "SPLIT_CAP": 0.10}
+    try:
+        with open(cfg_path) as f:
+            weights = json.load(f)
+    except Exception:
+        weights = defaults
+    return jsonify({"success": True, "weights": weights})
+
+
+@app.route("/api/model/optimize", methods=["POST"])
+def optimize_model():
+    try:
+        from models.optimizer import run_optimizer
+        result = run_optimizer()
+        return jsonify({"success": True, **result})
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as exc:
+        logger.error("optimize error: %s", exc, exc_info=True)
+        return jsonify({"success": False, "error": str(exc)}), 500
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

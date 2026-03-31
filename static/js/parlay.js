@@ -144,6 +144,56 @@ function parlayAutoSuggest() {
   showToast(`Auto-suggested ${selected.length}-leg parlay ⚡`, "success");
 }
 
+/* ── Bet logging helpers ──────────────────────────────────────────────────── */
+
+async function _logBetForLeg(leg, checkbox, labelEl) {
+  const today = new Date().toISOString().slice(0, 10);
+  const payload = {
+    bet_type:         "prop",
+    player_name:      leg.playerName,
+    prop_type:        leg.prop,
+    line:             leg.line,
+    over_under:       "over",
+    odds:             leg.overOdds,
+    model_projection: leg.modelProj  ?? null,
+    model_edge:       leg.edge       ?? null,
+    model_confidence: leg.modelConf  ?? null,
+    model_prob_over:  leg.modelProb  ?? null,
+    game_label:       leg.gameLabel  ?? "",
+    game_date:        today,
+    pick_label:       `${leg.playerName} Over ${leg.line} ${_propLabel(leg.prop)}`,
+  };
+  try {
+    const res  = await fetch("/api/bets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || "API error");
+    checkbox.dataset.betId = json.id;
+    labelEl.textContent    = "✓ Logged";
+    labelEl.classList.add("leg-logged");
+  } catch (err) {
+    checkbox.checked = false;
+    showToast(`Failed to log bet: ${err.message}`, "error");
+  }
+}
+
+async function _removeBetForLeg(checkbox, labelEl) {
+  const betId = checkbox.dataset.betId;
+  if (!betId) return;
+  try {
+    await fetch(`/api/bets/${betId}`, { method: "DELETE" });
+    delete checkbox.dataset.betId;
+    labelEl.textContent = "Place?";
+    labelEl.classList.remove("leg-logged");
+  } catch (err) {
+    checkbox.checked = true;
+    showToast(`Failed to remove bet: ${err.message}`, "error");
+  }
+}
+
 /* ── Render — Parlay legs ─────────────────────────────────────────────────── */
 function parlayRender() {
   const container  = document.getElementById("parlay-legs-container");
@@ -173,12 +223,29 @@ function parlayRender() {
             Over ${leg.line} ${_propLabel(leg.prop)}
             · Edge: <span style="color:var(--green)">${leg.edge >= 0 ? "+" : ""}${leg.edge}</span>
           </div>
+          <div class="leg-place-row">
+            <input type="checkbox" class="leg-placed-cb" id="cb-leg-${i}" />
+            <label class="leg-place-label" for="cb-leg-${i}">Place?</label>
+          </div>
         </div>
         <span class="leg-odds">${leg.overOdds >= 0 ? "+" : ""}${leg.overOdds}</span>
         <button class="leg-remove" onclick="parlayRemoveLeg(${i})" title="Remove">✕</button>
       </div>
     `)
     .join("");
+
+  // Wire up "Placed" checkboxes
+  container.querySelectorAll(".leg-placed-cb").forEach((cb, i) => {
+    const leg      = ParlayState.legs[i];
+    const labelEl  = container.querySelector(`label[for="cb-leg-${i}"]`);
+    cb.addEventListener("change", () => {
+      if (cb.checked) {
+        _logBetForLeg(leg, cb, labelEl);
+      } else {
+        _removeBetForLeg(cb, labelEl);
+      }
+    });
+  });
 
   // Summary
   if (summary && ParlayState.legs.length >= 2) {

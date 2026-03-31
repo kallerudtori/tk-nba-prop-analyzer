@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Settle Bets — NBA Prop Analyzer</title>
+  <link rel="stylesheet" href="/static/css/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ═══════════════════════════ HEADER ═══════════════════════════════════════ -->
+<header class="app-header">
+  <div class="header-left">
+    <span class="logo-icon">🏀</span>
+    <h1 class="app-title">NBA Prop Analyzer</h1>
+    <span class="header-subtitle">2025–26 Season</span>
+  </div>
+  <div class="header-center">
+    <nav class="page-nav">
+      <a href="/"       class="page-nav-btn">Props</a>
+      <a href="/lines"  class="page-nav-btn">Game Lines</a>
+      <a href="/settle" class="page-nav-btn active">Settle Bets</a>
+    </nav>
+  </div>
+  <div class="header-right"></div>
+</header>
+
+<!-- ═══════════════════════════ MAIN ══════════════════════════════════════════ -->
+<main class="settle-main">
+
+  <!-- ── Pending Bets ──────────────────────────────────────────────────── -->
+  <section class="settle-section">
+    <div class="settle-section-header">
+      <h2 class="settle-section-title">Pending Bets</h2>
+      <span id="pending-count" class="badge"></span>
+    </div>
+    <div id="pending-container">
+      <div class="settle-skeleton"></div>
+      <div class="settle-skeleton"></div>
+    </div>
+  </section>
+
+  <!-- ── Settled Bets ──────────────────────────────────────────────────── -->
+  <section class="settle-section">
+    <button class="settle-toggle-btn" id="settled-toggle">
+      Show settled (<span id="settled-count">0</span>)
+    </button>
+    <div id="settled-container" class="hidden"></div>
+  </section>
+
+  <!-- ── Accuracy Dashboard ────────────────────────────────────────────── -->
+  <section class="settle-section" id="accuracy-section">
+    <h2 class="settle-section-title">Accuracy Dashboard</h2>
+
+    <!-- Stats row -->
+    <div class="acc-stats-row" id="acc-stats-row">
+      <div class="acc-stat-card">
+        <div class="acc-stat-label">Settled Bets</div>
+        <div class="acc-stat-value" id="acc-total">—</div>
+      </div>
+      <div class="acc-stat-card">
+        <div class="acc-stat-label">Hit Rate</div>
+        <div class="acc-stat-value" id="acc-hit-rate">—</div>
+      </div>
+      <div class="acc-stat-card">
+        <div class="acc-stat-label">Best Prop Type</div>
+        <div class="acc-stat-value" id="acc-best-prop">—</div>
+      </div>
+    </div>
+
+    <!-- Charts (only when 5+ settled) -->
+    <div id="acc-charts-wrap" class="hidden">
+      <div class="acc-charts-grid">
+        <div class="acc-chart-box">
+          <div class="acc-chart-title">Hit Rate by Prop</div>
+          <div class="acc-chart-canvas-wrap"><canvas id="chart-by-prop"></canvas></div>
+        </div>
+        <div class="acc-chart-box">
+          <div class="acc-chart-title">Hit Rate by Confidence</div>
+          <div class="acc-chart-canvas-wrap"><canvas id="chart-by-conf"></canvas></div>
+        </div>
+        <div class="acc-chart-box">
+          <div class="acc-chart-title">Model Bias by Prop</div>
+          <div class="acc-chart-canvas-wrap"><canvas id="chart-bias"></canvas></div>
+        </div>
+        <div class="acc-chart-box">
+          <div class="acc-chart-title">Rolling Hit Rate (10-bet)</div>
+          <div class="acc-chart-canvas-wrap"><canvas id="chart-rolling"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <p id="acc-unlock-msg" class="muted-text small" style="margin-top:12px">
+      Settle more bets to unlock accuracy tracking.
+    </p>
+  </section>
+
+  <!-- ── Model Optimizer ───────────────────────────────────────────────── -->
+  <section class="settle-section optimizer-panel">
+    <h2 class="settle-section-title">Model Optimizer</h2>
+    <p class="muted-text small" style="margin-bottom:14px">
+      Finds the optimal L5 / L10 / Season weights by minimising projection error on your settled prop bets.
+    </p>
+
+    <!-- Current weights -->
+    <div class="optimizer-weights" id="optimizer-weights">
+      <div class="opt-weight-item">
+        <div class="opt-weight-label">W_L5</div>
+        <div class="opt-weight-value" id="ow-l5">—</div>
+        <div class="opt-weight-diff" id="od-l5"></div>
+      </div>
+      <div class="opt-weight-item">
+        <div class="opt-weight-label">W_L10</div>
+        <div class="opt-weight-value" id="ow-l10">—</div>
+        <div class="opt-weight-diff" id="od-l10"></div>
+      </div>
+      <div class="opt-weight-item">
+        <div class="opt-weight-label">W_Season</div>
+        <div class="opt-weight-value" id="ow-season">—</div>
+        <div class="opt-weight-diff" id="od-season"></div>
+      </div>
+      <div class="opt-weight-item">
+        <div class="opt-weight-label">OPP_CAP</div>
+        <div class="opt-weight-value" id="ow-opp">—</div>
+        <div class="opt-weight-diff" id="od-opp"></div>
+      </div>
+      <div class="opt-weight-item">
+        <div class="opt-weight-label">SPLIT_CAP</div>
+        <div class="opt-weight-value" id="ow-split">—</div>
+        <div class="opt-weight-diff" id="od-split"></div>
+      </div>
+    </div>
+
+    <!-- Optimizer controls -->
+    <div class="optimizer-actions">
+      <button class="btn btn-gold btn-sm" id="run-optimizer-btn">⚡ Run Optimizer</button>
+      <button class="btn btn-green btn-sm hidden" id="apply-weights-btn">✓ Apply New Weights</button>
+      <span class="spinner hidden" id="opt-spinner"></span>
+      <span id="opt-disabled-msg" class="muted-text small hidden">Need 30+ settled prop bets to run optimizer.</span>
+    </div>
+    <div id="opt-result" class="opt-result hidden"></div>
+  </section>
+
+</main>
+
+<!-- ═══════════════════════════ MOBILE NAV ═══════════════════════════════════ -->
+<nav class="mobile-nav">
+  <a href="/" class="mobile-nav-btn">
+    <span class="nav-icon">🏀</span>
+    <span>Props</span>
+  </a>
+  <a href="/lines" class="mobile-nav-btn">
+    <span class="nav-icon">📈</span>
+    <span>Lines</span>
+  </a>
+  <a href="/settle" class="mobile-nav-btn active">
+    <span class="nav-icon">📝</span>
+    <span>Bets</span>
+  </a>
+</nav>
+
+<script src="/static/js/settle.js"></script>
+</body>
+</html>

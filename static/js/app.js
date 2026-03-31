@@ -281,7 +281,10 @@ async function loadPlayerAnalysis(player, game, opponentTeamId, isHome) {
           overOdds:   prop.over_odds,
           edge:       prop.edge,
           modelProb:  prop.model_prob_over,
+          modelProj:  prop.projection,
+          modelConf:  prop.confidence,
           valueLabel: prop.value_label,
+          gameLabel:  `${game.away_team.abbreviation} @ ${game.home_team.abbreviation}`,
         });
       }
     }
