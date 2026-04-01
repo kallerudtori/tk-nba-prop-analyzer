@@ -228,9 +228,72 @@ function populateCard(card, game) {
   });
 }
 
+function renderAltLines(card, altSpreads) {
+  const section = card.querySelector(".lc-alt-lines");
+  if (!section) return;
+
+  if (!altSpreads || altSpreads.length === 0) {
+    section.classList.add("hidden");
+    return;
+  }
+
+  // Determine team names from existing card text
+  const awayName = card.querySelector(".away-name")?.textContent || "";
+  const homeName = card.querySelector(".home-name")?.textContent || "";
+
+  const awayLines = altSpreads.filter(a => a.team === awayName);
+  const homeLines = altSpreads.filter(a => a.team === homeName);
+
+  // Populate column headers
+  section.querySelector(".away-abbr-full").textContent =
+    card.querySelector(".away-abbr")?.textContent || awayName;
+  section.querySelector(".home-abbr-full").textContent =
+    card.querySelector(".home-abbr")?.textContent || homeName;
+
+  const fmtOdds = p => p > 0 ? `+${p}` : `${p}`;
+  const fmtPt   = p => p > 0 ? `+${p}` : `${p}`;
+
+  const fillCol = (col, lines) => {
+    // Remove previous rows (keep the header)
+    col.querySelectorAll(".lc-alt-line-row").forEach(r => r.remove());
+    lines.forEach(l => {
+      const row = document.createElement("div");
+      row.className = "lc-alt-line-row";
+      row.innerHTML =
+        `<span class="lc-alt-line-pt">${fmtPt(l.spread)}</span>` +
+        `<span class="lc-alt-line-odds">${fmtOdds(l.odds)}</span>`;
+      col.appendChild(row);
+    });
+  };
+
+  fillCol(section.querySelector('[data-side="away"]'), awayLines);
+  fillCol(section.querySelector('[data-side="home"]'), homeLines);
+
+  // Update count badge
+  const total = awayLines.length + homeLines.length;
+  section.querySelector(".lc-alt-lines-count").textContent = `(${total})`;
+
+  section.classList.remove("hidden");
+
+  // Toggle expand/collapse
+  const toggle = section.querySelector(".lc-alt-lines-toggle");
+  const body   = section.querySelector(".lc-alt-lines-body");
+  if (!toggle._bound) {
+    toggle._bound = true;
+    toggle.addEventListener("click", () => {
+      const open = !body.classList.contains("hidden");
+      body.classList.toggle("hidden", open);
+      toggle.classList.toggle("open", !open);
+    });
+  }
+}
+
 function renderAnalysis(card, data) {
   card.querySelector(".lc-analysis-loading").classList.add("hidden");
   card.querySelector(".lc-analysis-content").classList.remove("hidden");
+
+  // Alt lines table
+  renderAltLines(card, data.alternate_spreads);
 
   if (data.pick && data.pick !== "—") {
     const pickRow = card.querySelector(".lc-pick-row");

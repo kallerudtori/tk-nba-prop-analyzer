@@ -335,9 +335,11 @@ def api_game_analysis(event_id):
             "alternate_spreads": odds_svc.get_alternate_spreads(event_id),
         }
 
+        alt_spreads = context.get("alternate_spreads", [])
         analysis = generate_game_analysis(context)
-        cache.set(cache_key, analysis, timeout=3600)
-        return jsonify({"success": True, **analysis})
+        payload = {**analysis, "alternate_spreads": alt_spreads}
+        cache.set(cache_key, payload, timeout=3600)
+        return jsonify({"success": True, **payload})
 
     except Exception as exc:
         logger.error("api_game_analysis error event=%s: %s", event_id, exc, exc_info=True)

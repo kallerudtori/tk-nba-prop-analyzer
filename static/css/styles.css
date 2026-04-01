@@ -1607,6 +1607,38 @@ a.mobile-nav-btn { text-decoration: none; }
 .lc-alt-pick-val   { color: var(--gold); font-weight: 700; font-size: 0.75rem; }
 .tp-alt-comparison { font-size: 0.82rem; color: var(--text-secondary); font-style: italic; margin-top: 6px; }
 
+/* ── Alt Lines Table ────────────────────────────────────────────────────── */
+.lc-alt-lines { margin-top: 10px; }
+.lc-alt-lines-toggle {
+  background: none; border: none; cursor: pointer;
+  color: var(--gold-dim); font-size: 0.72rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 4px 0; display: flex; align-items: center; gap: 5px;
+  transition: color 0.15s;
+}
+.lc-alt-lines-toggle:hover { color: var(--gold); }
+.lc-alt-lines-toggle.open  { color: var(--gold); }
+.lc-alt-lines-count { font-weight: 400; opacity: 0.7; }
+.lc-alt-lines-body  { margin-top: 8px; }
+.lc-alt-lines-cols  {
+  display: grid; grid-template-columns: 1fr 1px 1fr;
+  gap: 0 10px; padding: 10px; border-radius: 8px;
+  background: var(--card-bg); border: 1px solid var(--border);
+}
+.lc-alt-lines-divider { background: var(--border); }
+.lc-alt-col-header {
+  font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-muted);
+  padding-bottom: 6px; border-bottom: 1px solid var(--border); margin-bottom: 6px;
+}
+.lc-alt-line-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 3px 0; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.lc-alt-line-row:last-child { border-bottom: none; }
+.lc-alt-line-pt   { color: var(--text-primary); font-weight: 600; }
+.lc-alt-line-odds { color: var(--text-secondary); font-size: 0.7rem; }
+
 /* ── Analysis Text ──────────────────────────────────────────────────────── */
 .lc-analysis-text {
   font-size: 0.83rem;

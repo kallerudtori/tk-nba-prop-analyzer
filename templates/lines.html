@@ -138,6 +138,26 @@
             <span class="lc-alt-badge hidden">ALT</span>
             <span class="lc-confidence-badge"></span>
           </div>
+          <!-- Alt lines table (hidden until analysis loads) -->
+          <div class="lc-alt-lines hidden">
+            <button class="lc-alt-lines-toggle" type="button">
+              ↕ DK Alt Spreads <span class="lc-alt-lines-count"></span>
+            </button>
+            <div class="lc-alt-lines-body hidden">
+              <div class="lc-alt-lines-cols">
+                <div class="lc-alt-lines-col" data-side="away">
+                  <div class="lc-alt-col-header away-abbr-full"></div>
+                  <!-- rows injected by JS -->
+                </div>
+                <div class="lc-alt-lines-divider"></div>
+                <div class="lc-alt-lines-col" data-side="home">
+                  <div class="lc-alt-col-header home-abbr-full"></div>
+                  <!-- rows injected by JS -->
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Alt spread comparison row (hidden by default) -->
           <div class="lc-alt-comparison hidden">
             <span class="lc-alt-label">Main line</span>
