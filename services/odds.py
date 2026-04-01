@@ -316,6 +316,77 @@ class OddsService:
         return result
 
     # ------------------------------------------------------------------ #
+    #  Alternate Spreads (lazy per-event, cached 1 h)                    #
+    # ------------------------------------------------------------------ #
+
+    def get_alternate_spreads(self, event_id: str) -> list:
+        """
+        Fetch DraftKings alternate spreads for a single event.
+        Returns a list of dicts: [{team, spread, odds, implied_prob}, ...]
+        sorted by absolute spread value (tightest first).
+        Returns [] gracefully if the market is unavailable.
+        """
+        cache_key = f"alt_spreads_{event_id}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            resp = requests.get(
+                f"{ODDS_API_BASE}/sports/basketball_nba/events/{event_id}/odds",
+                params={
+                    "apiKey":      self.api_key,
+                    "regions":     "us",
+                    "markets":     "alternate_spreads",
+                    "oddsFormat":  "american",
+                    "bookmakers":  "draftkings",
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            self._store_quota(resp.headers)
+            data = resp.json()
+        except requests.RequestException as exc:
+            logger.warning("Alt spreads fetch failed event=%s: %s", event_id, exc)
+            return []
+
+        result = []
+        seen   = set()
+
+        dk = next(
+            (b for b in data.get("bookmakers", []) if b["key"] == "draftkings"),
+            None,
+        )
+        if not dk:
+            logger.warning("No DraftKings alternate_spreads for event %s", event_id)
+            self.cache.set(cache_key, [], timeout=3600)
+            return []
+
+        for market in dk.get("markets", []):
+            if market.get("key") != "alternate_spreads":
+                continue
+            for outcome in market.get("outcomes", []):
+                team  = outcome.get("name", "")
+                point = outcome.get("point")
+                price = outcome.get("price")
+                if team and point is not None and price is not None:
+                    key = (team, point)
+                    if key not in seen:
+                        seen.add(key)
+                        result.append({
+                            "team":         team,
+                            "spread":       float(point),
+                            "odds":         int(price),
+                            "implied_prob": self._to_prob(int(price)),
+                        })
+
+        # Sort tightest spread first (smallest absolute value)
+        result.sort(key=lambda x: abs(x["spread"]))
+        self.cache.set(cache_key, result, timeout=3600)
+        logger.info("Fetched %d alt spread outcomes for event %s", len(result), event_id)
+        return result
+
+    # ------------------------------------------------------------------ #
     #  Cache management & quota                                            #
     # ------------------------------------------------------------------ #
 

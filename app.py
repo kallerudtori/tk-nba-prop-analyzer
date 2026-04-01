@@ -325,13 +325,14 @@ def api_game_analysis(event_id):
 
         context = {
             **lines,
-            "game_time":     game_time,
-            "home_opp_pts":  home_opp_pts,
-            "away_opp_pts":  away_opp_pts,
-            "home_record":   home_record,
-            "away_record":   away_record,
-            "home_b2b":      home_b2b,
-            "away_b2b":      away_b2b,
+            "game_time":        game_time,
+            "home_opp_pts":     home_opp_pts,
+            "away_opp_pts":     away_opp_pts,
+            "home_record":      home_record,
+            "away_record":      away_record,
+            "home_b2b":         home_b2b,
+            "away_b2b":         away_b2b,
+            "alternate_spreads": odds_svc.get_alternate_spreads(event_id),
         }
 
         analysis = generate_game_analysis(context)
@@ -390,13 +391,14 @@ def api_games_top_pick():
             a_def = defense_by_id.get(game["away_team"]["id"], {})
             games_ctx.append({
                 **lines,
-                "game_time":    game.get("game_time", "TBD"),
-                "home_opp_pts": round(h_def.get("opp_pts", 0), 1) if h_def else None,
-                "away_opp_pts": round(a_def.get("opp_pts", 0), 1) if a_def else None,
-                "home_record":  f"{game['home_team'].get('wins','?')}-{game['home_team'].get('losses','?')}",
-                "away_record":  f"{game['away_team'].get('wins','?')}-{game['away_team'].get('losses','?')}",
-                "home_b2b":     game["home_team"]["id"] in yesterday_ids,
-                "away_b2b":     game["away_team"]["id"] in yesterday_ids,
+                "game_time":        game.get("game_time", "TBD"),
+                "home_opp_pts":     round(h_def.get("opp_pts", 0), 1) if h_def else None,
+                "away_opp_pts":     round(a_def.get("opp_pts", 0), 1) if a_def else None,
+                "home_record":      f"{game['home_team'].get('wins','?')}-{game['home_team'].get('losses','?')}",
+                "away_record":      f"{game['away_team'].get('wins','?')}-{game['away_team'].get('losses','?')}",
+                "home_b2b":         game["home_team"]["id"] in yesterday_ids,
+                "away_b2b":         game["away_team"]["id"] in yesterday_ids,
+                "alternate_spreads": odds_svc.get_alternate_spreads(eid) if eid else [],
             })
 
         if not games_ctx:

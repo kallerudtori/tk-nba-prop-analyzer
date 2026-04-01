@@ -82,6 +82,21 @@ function renderTopPick(data) {
   document.getElementById("tp-game-label").textContent = data.game || "";
   document.getElementById("tp-analysis").textContent   = data.analysis || "";
 
+  // ALT badge in banner
+  const tpAlt = document.getElementById("tp-alt-badge");
+  if (tpAlt) tpAlt.classList.toggle("hidden", !data.is_alternate);
+
+  // Alt comparison line in banner
+  const tpAltComp = document.getElementById("tp-alt-comparison");
+  if (tpAltComp) {
+    if (data.is_alternate && data.alt_spread_comparison) {
+      tpAltComp.textContent = `📊 Line comparison: ${data.alt_spread_comparison}`;
+      tpAltComp.classList.remove("hidden");
+    } else {
+      tpAltComp.classList.add("hidden");
+    }
+  }
+
   const conf      = (data.confidence || "low").toLowerCase();
   const confBadge = document.getElementById("tp-confidence");
   confBadge.textContent = conf.charAt(0).toUpperCase() + conf.slice(1);
@@ -221,6 +236,21 @@ function renderAnalysis(card, data) {
     const pickRow = card.querySelector(".lc-pick-row");
     pickRow.classList.remove("hidden");
     card.querySelector(".lc-pick-value").textContent = data.pick;
+
+    // ALT badge
+    const altBadge = card.querySelector(".lc-alt-badge");
+    if (altBadge) {
+      altBadge.classList.toggle("hidden", !data.is_alternate);
+    }
+
+    // Alt comparison row
+    const altComp = card.querySelector(".lc-alt-comparison");
+    if (altComp && data.is_alternate && data.alt_spread_comparison) {
+      altComp.querySelector(".lc-main-line-val").textContent = data.alt_spread_comparison;
+      altComp.querySelector(".lc-alt-pick-val").textContent  = data.pick;
+      altComp.classList.remove("hidden");
+    }
+
     const conf      = (data.confidence || "low").toLowerCase();
     const confBadge = card.querySelector(".lc-confidence-badge");
     confBadge.textContent = conf.charAt(0).toUpperCase() + conf.slice(1);

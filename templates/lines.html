@@ -46,9 +46,11 @@
       </div>
       <div class="tp-pick-row">
         <span id="tp-pick" class="tp-pick"></span>
+        <span id="tp-alt-badge" class="lc-alt-badge hidden">ALT</span>
         <span id="tp-game-label" class="tp-game-label"></span>
       </div>
       <p id="tp-analysis" class="tp-analysis"></p>
+      <p id="tp-alt-comparison" class="tp-alt-comparison hidden"></p>
     </div>
   </div>
 
@@ -133,7 +135,16 @@
           <div class="lc-pick-row hidden">
             <span class="lc-pick-label">Pick</span>
             <span class="lc-pick-value"></span>
+            <span class="lc-alt-badge hidden">ALT</span>
             <span class="lc-confidence-badge"></span>
+          </div>
+          <!-- Alt spread comparison row (hidden by default) -->
+          <div class="lc-alt-comparison hidden">
+            <span class="lc-alt-label">Main line</span>
+            <span class="lc-main-line-val"></span>
+            <span class="lc-alt-arrow">→</span>
+            <span class="lc-alt-label">Recommended</span>
+            <span class="lc-alt-pick-val"></span>
           </div>
           <p class="lc-analysis-text"></p>
           <div class="lc-place-row hidden">

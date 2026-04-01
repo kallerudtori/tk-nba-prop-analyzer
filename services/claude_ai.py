@@ -53,7 +53,7 @@ def generate_game_analysis(context: dict) -> dict:
     try:
         msg = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=900,
+            max_tokens=1000,
             messages=[{"role": "user", "content": prompt}],
         )
         text = msg.content[0].text.strip()
@@ -61,8 +61,13 @@ def generate_game_analysis(context: dict) -> dict:
         start = text.find("{")
         end   = text.rfind("}") + 1
         if start >= 0 and end > start:
-            return json.loads(text[start:end])
-        return {"analysis": text, "pick": "—", "confidence": "low"}
+            result = json.loads(text[start:end])
+            # Ensure new fields have defaults if Claude omits them
+            result.setdefault("is_alternate", False)
+            result.setdefault("alt_spread_comparison", None)
+            return result
+        return {"analysis": text, "pick": "—", "confidence": "low",
+                "is_alternate": False, "alt_spread_comparison": None}
     except Exception as exc:
         logger.error("Claude API error: %s", exc)
         return _rule_based_analysis(context)
@@ -97,6 +102,23 @@ def generate_top_pick(games: list) -> dict:
         if g.get("away_b2b"):
             b2b_flags.append(f"{g['away_team']} B2B")
         b2b_note = f"  💤 {', '.join(b2b_flags)}" if b2b_flags else ""
+
+        # Alternate spreads summary for this game
+        alt_text = ""
+        alt_spreads = g.get("alternate_spreads") or []
+        if alt_spreads:
+            home = g["home_team"]
+            away = g["away_team"]
+            home_alts = [a for a in alt_spreads if a["team"] == home][:3]
+            away_alts = [a for a in alt_spreads if a["team"] == away][:3]
+            if home_alts or away_alts:
+                alt_lines = []
+                for a in home_alts:
+                    alt_lines.append(f"{home} {_fmt_point(a['spread'])} ({_fmt_odds(a['odds'])})")
+                for a in away_alts:
+                    alt_lines.append(f"{away} {_fmt_point(a['spread'])} ({_fmt_odds(a['odds'])})")
+                alt_text = f"   Alt spreads: {' | '.join(alt_lines)}\n"
+
         lines_text += (
             f"{i}. {g['away_team']} ({g.get('away_record','')}) @ "
             f"{g['home_team']} ({g.get('home_record','')})  {g.get('game_time','')}{b2b_note}\n"
@@ -106,17 +128,19 @@ def generate_top_pick(games: list) -> dict:
             f"{g['home_team']} {_fmt_point(sp.get('home_point'))}\n"
             f"   O/U: {tot.get('point','?')} | "
             f"Defense: {g['away_team']} allows {g.get('away_opp_pts','?')} pts/g, "
-            f"{g['home_team']} allows {g.get('home_opp_pts','?')} pts/g\n\n"
+            f"{g['home_team']} allows {g.get('home_opp_pts','?')} pts/g\n"
+            f"{alt_text}\n"
         )
 
     prompt = f"""You are a sharp NBA betting analyst writing in an engaging expert style. Here are today's games:
 
-{lines_text}Scan the full slate and choose the SINGLE best bet — the one with the clearest edge considering implied probability, defensive matchup, back-to-back fatigue, and line value. If no game has a strong edge, say so.
+{lines_text}Scan the full slate and choose the SINGLE best bet — the one with the clearest edge considering implied probability, defensive matchup, back-to-back fatigue, and line value. Consider alternate spreads when they offer better value than the main line. If no game has a strong edge, say so.
 
 Write your analysis in this style:
 - Opening hook: what stands out about this matchup or the slate overall
 - Key factors: pace, defense, fatigue (B2B), value vs. the number
 - THE PICK with a clear rationale — or "PASS" if the slate is chalk with no value
+- If recommending an alternate spread, label it clearly with "(Alt)" in the pick and explain why it's better value than the main line
 - If PASS, name 1-2 player props you'd target instead
 
 Use a few relevant emojis (🏀 🎯 💤 ⚠️). Keep it punchy — 3-4 short paragraphs.
@@ -124,23 +148,31 @@ Use a few relevant emojis (🏀 🎯 💤 ⚠️). Keep it punchy — 3-4 short 
 Respond ONLY with valid JSON:
 {{
   "game": "Away Team @ Home Team (the matchup you chose, or 'Full Slate' if PASS)",
-  "pick": "specific bet e.g. 'Boston Celtics -11.5' or 'OKC Thunder ML' or 'Under 213.5' or 'PASS'",
+  "pick": "specific bet e.g. 'Boston Celtics -11.5' or 'Boston Celtics -8 (Alt)' or 'OKC Thunder ML' or 'PASS'",
   "confidence": "low|medium|high",
-  "analysis": "your full multi-paragraph analysis with emojis and line breaks between paragraphs"
-}}"""
+  "analysis": "your full multi-paragraph analysis with emojis and line breaks between paragraphs",
+  "is_alternate": false,
+  "alt_spread_comparison": null
+}}
+
+Set is_alternate to true if the pick is an alternate spread. Set alt_spread_comparison to a one-sentence comparison of main vs alternate (e.g. "Main line is Celtics -11.5 (-110); alternate Celtics -8 (-130) offers more cushion at modest odds cost") or null if not recommending an alternate."""
 
     try:
         msg  = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=600,
+            max_tokens=700,
             messages=[{"role": "user", "content": prompt}],
         )
         text  = msg.content[0].text.strip()
         start = text.find("{")
         end   = text.rfind("}") + 1
         if start >= 0 and end > start:
-            return json.loads(text[start:end])
-        return {"game": "—", "pick": "—", "confidence": "low", "analysis": text}
+            result = json.loads(text[start:end])
+            result.setdefault("is_alternate", False)
+            result.setdefault("alt_spread_comparison", None)
+            return result
+        return {"game": "—", "pick": "—", "confidence": "low", "analysis": text,
+                "is_alternate": False, "alt_spread_comparison": None}
     except Exception as exc:
         logger.error("Claude top-pick error: %s", exc)
         return _rule_based_top_pick(games)
@@ -227,6 +259,20 @@ def _build_prompt(ctx: dict) -> str:
     home_sp_val = sp.get("home_point", 0) or 0
     away_sp_val = sp.get("away_point", 0) or 0
 
+    # Build alternate spreads section
+    alt_spreads = ctx.get("alternate_spreads") or []
+    if alt_spreads:
+        home_alts = [a for a in alt_spreads if a["team"] == home][:4]
+        away_alts = [a for a in alt_spreads if a["team"] == away][:4]
+        alt_lines = []
+        for a in home_alts:
+            alt_lines.append(f"  {home} {_fmt_point(a['spread'])} ({_fmt_odds(a['odds'])})")
+        for a in away_alts:
+            alt_lines.append(f"  {away} {_fmt_point(a['spread'])} ({_fmt_odds(a['odds'])})")
+        alt_section = "Alternate Spreads (DraftKings):\n" + "\n".join(alt_lines)
+    else:
+        alt_section = "Alternate Spreads: not available"
+
     return f"""You are a sharp NBA betting analyst writing in an engaging, authoritative style.
 
 Game: {away}{rec_away} @ {home}{rec_home}
@@ -238,6 +284,8 @@ DraftKings Lines:
 - Spread:     {away} {away_sp} ({away_sp_pr})  |  {home} {home_sp} ({home_sp_pr})
 - Total:      O/U {total_pt}  —  Over {over_pr}  |  Under {under_pr}
 
+{alt_section}
+
 Defense (opp pts/g allowed — lower = tougher D):
 - {away}: {def_away} pts/g allowed
 - {home}: {def_home} pts/g allowed
@@ -246,18 +294,22 @@ Write a sharp betting breakdown in this structure:
 
 **Opening:** 1-2 sentences on what makes this matchup worth attention — back-to-back situations, a notable line, or a key stylistic mismatch.
 
-**Analysis:** 2-3 sentences on the key factors: pace, defense, fatigue impact, home/road splits, and whether the implied probability reflects true edge.
+**Analysis:** 2-3 sentences on the key factors: pace, defense, fatigue impact, home/road splits, and whether the implied probability reflects true edge. Consider if an alternate spread offers better value than the main line.
 
-**🎯 THE PICK:** Give a specific bet recommendation — e.g. "{home} {_fmt_point(home_sp_val)}" or "{away} ML" or "Under {total_pt}" — with a 1-sentence rationale. OR, if the line is too tight/vig too high with no clear edge, write "PASS — no clear edge" and suggest 1-2 player props to target instead (e.g. "Target [Player] points over X.X").
+**🎯 THE PICK:** Give a specific bet — e.g. "{home} {_fmt_point(home_sp_val)}" or "{away} ML" or "Under {total_pt}". If an alternate spread is the better value, recommend it with "(Alt)" suffix (e.g. "{home} -4 (Alt)") and explain why. OR write "PASS — no clear edge" and suggest 1-2 player props instead.
 
 Use relevant emojis (🏀 🎯 💤 ⚠️ 🔥). Keep it punchy — 3 short paragraphs max. Separate paragraphs with \\n\\n.
 
 Respond ONLY with a valid JSON object — no preamble, no markdown fences:
 {{
   "analysis": "your full multi-paragraph analysis with emojis and \\n\\n between paragraphs",
-  "pick": "specific bet e.g. '{home} {_fmt_point(home_sp_val)}' or '{away} ML' or 'Under {total_pt}' or 'PASS'",
-  "confidence": "low|medium|high"
-}}"""
+  "pick": "specific bet e.g. '{home} {_fmt_point(home_sp_val)}' or '{away} ML' or 'Under {total_pt}' or '{home} -4 (Alt)' or 'PASS'",
+  "confidence": "low|medium|high",
+  "is_alternate": false,
+  "alt_spread_comparison": null
+}}
+
+Set is_alternate to true only if the pick includes "(Alt)". Set alt_spread_comparison to a single sentence comparing the main spread to the recommended alternate (e.g. "Main line is {away} {away_sp} ({away_sp_pr}); alternate offers more coverage at modest extra cost") — or null if not recommending an alternate."""
 
 
 def _rule_based_analysis(ctx: dict) -> dict:
@@ -319,4 +371,5 @@ def _rule_based_analysis(ctx: dict) -> dict:
             f"No high-conviction side bet."
         )
 
-    return {"analysis": analysis, "pick": pick, "confidence": confidence}
+    return {"analysis": analysis, "pick": pick, "confidence": confidence,
+            "is_alternate": False, "alt_spread_comparison": None}
