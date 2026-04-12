@@ -134,16 +134,20 @@ def generate_top_pick(games: list) -> dict:
 
     prompt = f"""You are a sharp NBA betting analyst writing in an engaging expert style. Here are today's games:
 
-{lines_text}Scan the full slate and choose the SINGLE best bet — the one with the clearest edge considering implied probability, defensive matchup, back-to-back fatigue, and line value. Consider alternate spreads when they offer better value than the main line. If no game has a strong edge, say so.
+{lines_text}
+STEP 1 — ALT SPREAD EVALUATION (do this for every game before picking):
+- If a game has a main spread of 7+, check its alt spreads. If a line 3–5 pts tighter is available at -140 or better, that alt is the sharper play.
+- If you like a team but the main spread feels like too much margin, look for an alt that gives 3+ pts of cushion at ≤ -150. If found, that's your pick.
+- Annotate any game where an alt spread is the best play.
 
-Write your analysis in this style:
-- Opening hook: what stands out about this matchup or the slate overall
-- Key factors: pace, defense, fatigue (B2B), value vs. the number
-- THE PICK with a clear rationale — or "PASS" if the slate is chalk with no value
-- If recommending an alternate spread, label it clearly with "(Alt)" in the pick and explain why it's better value than the main line
-- If PASS, name 1-2 player props you'd target instead
+STEP 2 — Choose the SINGLE best bet across the slate, factoring in implied probability, defensive matchup, B2B fatigue, and line value (including alts from Step 1).
 
-Use a few relevant emojis (🏀 🎯 💤 ⚠️). Keep it punchy — 3-4 short paragraphs.
+Write your analysis:
+- Opening hook: what stands out about this matchup
+- Key factors: pace, defense, fatigue, value vs. the number — explicitly note if an alt spread is the smarter line
+- THE PICK with rationale — or "PASS" if the slate has no clear edge (name 1-2 props instead)
+
+Use emojis (🏀 🎯 💤 ⚠️). Keep it punchy — 3-4 short paragraphs.
 
 Respond ONLY with valid JSON:
 {{
@@ -155,7 +159,7 @@ Respond ONLY with valid JSON:
   "alt_spread_comparison": null
 }}
 
-Set is_alternate to true if the pick is an alternate spread. Set alt_spread_comparison to a one-sentence comparison of main vs alternate (e.g. "Main line is Celtics -11.5 (-110); alternate Celtics -8 (-130) offers more cushion at modest odds cost") or null if not recommending an alternate."""
+Set is_alternate to true if the pick is an alternate spread. Set alt_spread_comparison to a one-sentence comparison of main vs alternate (e.g. "Main line is Celtics -11.5 (-110); alternate Celtics -8 (-130) cuts margin risk while keeping solid value") or null if not recommending an alternate."""
 
     try:
         msg  = client.messages.create(
@@ -290,13 +294,19 @@ Defense (opp pts/g allowed — lower = tougher D):
 - {away}: {def_away} pts/g allowed
 - {home}: {def_home} pts/g allowed
 
-Write a sharp betting breakdown in this structure:
+ALT SPREAD EVALUATION — do this before picking:
+1. If the main spread is 7 or larger, check whether a tighter alternate (3–5 pts closer to 0) is available at -140 or better odds. If yes, that alt is almost always the sharper play — recommend it.
+2. If you like a team to win but the main spread feels too large (risky margin), scan the alt spreads for a line that gives 3+ pts of extra cushion at reasonable juice (≤ -150). If found, recommend the alt.
+3. If the main spread is under 6, only recommend an alt if there's a specific reason the margin is uncertain (B2B, injury, pace mismatch).
+4. If no alt spreads are listed above, stick with the main line or totals.
 
-**Opening:** 1-2 sentences on what makes this matchup worth attention — back-to-back situations, a notable line, or a key stylistic mismatch.
+Write a sharp breakdown in this structure:
 
-**Analysis:** 2-3 sentences on the key factors: pace, defense, fatigue impact, home/road splits, and whether the implied probability reflects true edge. Consider if an alternate spread offers better value than the main line.
+**Opening:** 1-2 sentences on what makes this matchup worth attention.
 
-**🎯 THE PICK:** Give a specific bet — e.g. "{home} {_fmt_point(home_sp_val)}" or "{away} ML" or "Under {total_pt}". If an alternate spread is the better value, recommend it with "(Alt)" suffix (e.g. "{home} -4 (Alt)") and explain why. OR write "PASS — no clear edge" and suggest 1-2 player props instead.
+**Analysis:** 2-3 sentences on pace, defense, fatigue, and line value. If an alt spread is the better play, say why explicitly (e.g. "The -8.5 is risky margin-wise; the -5.5 at -125 gives essential cushion").
+
+**🎯 THE PICK:** One specific bet. If recommending an alt, use "(Alt)" suffix — e.g. "{home} -4 (Alt)". OR "PASS — no clear edge" with 1-2 prop suggestions.
 
 Use relevant emojis (🏀 🎯 💤 ⚠️ 🔥). Keep it punchy — 3 short paragraphs max. Separate paragraphs with \\n\\n.
 
@@ -309,7 +319,7 @@ Respond ONLY with a valid JSON object — no preamble, no markdown fences:
   "alt_spread_comparison": null
 }}
 
-Set is_alternate to true only if the pick includes "(Alt)". Set alt_spread_comparison to a single sentence comparing the main spread to the recommended alternate (e.g. "Main line is {away} {away_sp} ({away_sp_pr}); alternate offers more coverage at modest extra cost") — or null if not recommending an alternate."""
+Set is_alternate to true only if the pick includes "(Alt)". Set alt_spread_comparison to a single sentence comparing the main spread to the recommended alternate (e.g. "Main line is {away} {away_sp} ({away_sp_pr}); alternate {home} -4 (-125) cuts the margin risk while keeping solid value") — or null if not recommending an alternate."""
 
 
 def _rule_based_analysis(ctx: dict) -> dict:

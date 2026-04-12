@@ -35,6 +35,13 @@ model = ProjectionModel()
 init_db()
 
 
+# ── Global error handler (always return JSON, never HTML) ────────────────────
+@app.errorhandler(Exception)
+def handle_any_exception(e):
+    logger.error("Unhandled exception: %s", e, exc_info=True)
+    return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -265,27 +272,31 @@ def api_games_lines():
 def api_debug_lines():
     """Debug: show raw Odds API response and matching results."""
     day_offset = request.args.get("day_offset", 0, type=int)
-    events     = odds_svc.get_nba_events(day_offset=day_offset)
-    all_lines  = odds_svc.get_all_game_lines(day_offset=day_offset)
-    games      = nba_svc.get_games(day_offset=day_offset)
-    matches    = []
-    for g in games:
-        eid = odds_svc.match_game_to_event(
-            g["home_team"]["name"], g["away_team"]["name"], events
-        )
-        matches.append({
-            "nba_home": g["home_team"]["name"],
-            "nba_away": g["away_team"]["name"],
-            "matched_event_id": eid,
-            "has_lines": eid in all_lines if eid else False,
+    try:
+        events    = odds_svc.get_nba_events(day_offset=day_offset)
+        all_lines = odds_svc.get_all_game_lines(day_offset=day_offset)
+        games     = nba_svc.get_games(day_offset=day_offset)
+        matches   = []
+        for g in games:
+            eid = odds_svc.match_game_to_event(
+                g["home_team"]["name"], g["away_team"]["name"], events
+            )
+            matches.append({
+                "nba_home": g["home_team"]["name"],
+                "nba_away": g["away_team"]["name"],
+                "matched_event_id": eid,
+                "has_lines": eid in all_lines if eid else False,
+            })
+        return jsonify({
+            "quota": odds_svc.get_quota(),
+            "events_count": len(events),
+            "lines_count": len(all_lines),
+            "games_count": len(games),
+            "matches": matches,
         })
-    return jsonify({
-        "quota": odds_svc.get_quota(),
-        "events_count": len(events),
-        "lines_count": len(all_lines),
-        "games_count": len(games),
-        "matches": matches,
-    })
+    except Exception as exc:
+        logger.error("api_debug_lines error: %s", exc, exc_info=True)
+        return jsonify({"success": False, "error": str(exc), "quota": odds_svc.get_quota()}), 500
 
 
 @app.route("/api/game/<event_id>/analysis")
