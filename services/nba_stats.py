@@ -9,16 +9,38 @@ import time
 import logging
 from datetime import datetime, timedelta
 
+import re
 import pandas as pd
 import numpy as np
 import pytz
 
-_EASTERN = pytz.timezone("America/New_York")
+_MOUNTAIN = pytz.timezone("America/Denver")
 
 
-def _today_et():
-    """Return today's date in US/Eastern — safe on UTC-based cloud servers."""
-    return datetime.now(_EASTERN).date()
+def _today_mt():
+    """Return today's date in US/Mountain — safe on UTC-based cloud servers."""
+    return datetime.now(_MOUNTAIN).date()
+
+
+def _et_to_mt(status_text: str) -> str:
+    """Convert NBA gameStatusText from ET to MT display (MT = ET - 2h)."""
+    m = re.match(r"(\d+):(\d+)\s*(am|pm)\s*ET", status_text, re.IGNORECASE)
+    if not m:
+        return status_text  # "Final", "Q3 5:23", "Halftime", etc.
+    h, mins, ampm = int(m.group(1)), int(m.group(2)), m.group(3).lower()
+    if ampm == "pm" and h != 12:
+        h += 12
+    elif ampm == "am" and h == 12:
+        h = 0
+    h -= 2
+    if h < 0:
+        h += 24
+    new_ampm = "pm" if h >= 12 else "am"
+    if h > 12:
+        h -= 12
+    elif h == 0:
+        h = 12
+    return f"{h}:{mins:02d} {new_ampm} MT"
 
 
 def _exp_decay_avg(vals, decay: float = 0.07) -> float:
@@ -72,8 +94,8 @@ class NBAStatsService:
         Fetch games for today (day_offset=0) or any offset (1=tomorrow, -1=yesterday).
         Uses ScoreboardV3 (ScoreboardV2 is deprecated for 2025-26 season).
         """
-        today_et = _today_et()
-        cache_key = f"games_{day_offset}_{today_et.isoformat()}"
+        today_mt = _today_mt()
+        cache_key = f"games_{day_offset}_{today_mt.isoformat()}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
@@ -83,7 +105,7 @@ class NBAStatsService:
 
         try:
             time.sleep(NBA_API_DELAY)
-            target_date = (today_et + timedelta(days=day_offset)).isoformat()
+            target_date = (today_mt + timedelta(days=day_offset)).isoformat()
             sb = scoreboardv3.ScoreboardV3(
                 game_date=target_date,
                 league_id="00",
@@ -123,7 +145,7 @@ class NBAStatsService:
                 away_rec = team_record.get((game_id, away_id), {}) if away_id else {}
 
                 status_text = str(row.get("gameStatusText", "")).strip()
-                game_time   = status_text if status_text else "TBD"
+                game_time   = _et_to_mt(status_text) if status_text else "TBD"
 
                 games.append({
                     "game_id": game_id,
@@ -161,7 +183,7 @@ class NBAStatsService:
     # ------------------------------------------------------------------ #
 
     def get_team_roster(self, team_id: int) -> list:
-        cache_key = f"roster_{team_id}_{_today_et().isoformat()}"
+        cache_key = f"roster_{team_id}_{_today_mt().isoformat()}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
@@ -196,7 +218,7 @@ class NBAStatsService:
     # ------------------------------------------------------------------ #
 
     def get_player_stats(self, player_id: int) -> dict:
-        cache_key = f"player_stats_{player_id}_{_today_et().isoformat()}"
+        cache_key = f"player_stats_{player_id}_{_today_mt().isoformat()}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
@@ -253,7 +275,7 @@ class NBAStatsService:
                     most_recent = datetime.strptime(
                         df["GAME_DATE"].iloc[0].title(), "%b %d, %Y"
                     ).date()
-                    is_back_to_back = (most_recent == (_today_et() - timedelta(days=1)))
+                    is_back_to_back = (most_recent == (_today_mt() - timedelta(days=1)))
                 except (ValueError, TypeError):
                     is_back_to_back = False
 
@@ -377,7 +399,7 @@ class NBAStatsService:
         }
 
     def _get_league_team_stats(self) -> list:
-        cache_key = f"league_opp_stats_{_today_et().isoformat()}"
+        cache_key = f"league_opp_stats_{_today_mt().isoformat()}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached

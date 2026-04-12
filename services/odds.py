@@ -39,7 +39,7 @@ class OddsService:
 
     def get_nba_events(self, day_offset: int = 0) -> list:
         """Return NBA events from The Odds API for the given day (in US/Eastern time)."""
-        eastern = pytz.timezone("America/New_York")
+        eastern = pytz.timezone("America/Denver")
         today_et = datetime.now(eastern).date()
         target_local = today_et + timedelta(days=day_offset)
 
@@ -223,7 +223,7 @@ class OddsService:
         Fetch DraftKings moneyline, spread, and total for all games in one call.
         Returns a dict keyed by event_id.
         """
-        eastern = pytz.timezone("America/New_York")
+        eastern = pytz.timezone("America/Denver")
         today_et = datetime.now(eastern).date()
         target_local = today_et + timedelta(days=day_offset)
 
@@ -394,7 +394,7 @@ class OddsService:
         if event_id:
             self.cache.delete(f"props_{event_id}")
         # Clear both today and tomorrow's event caches (use ET date)
-        today_et = datetime.now(pytz.timezone("America/New_York")).date()
+        today_et = datetime.now(pytz.timezone("America/Denver")).date()
         self.cache.delete(f"nba_events_{today_et.isoformat()}")
         self.cache.delete(f"nba_events_{(today_et + timedelta(days=1)).isoformat()}")
 

@@ -261,6 +261,33 @@ def api_games_lines():
         return jsonify({"success": False, "error": str(exc)}), 500
 
 
+@app.route("/api/debug/lines")
+def api_debug_lines():
+    """Debug: show raw Odds API response and matching results."""
+    day_offset = request.args.get("day_offset", 0, type=int)
+    events     = odds_svc.get_nba_events(day_offset=day_offset)
+    all_lines  = odds_svc.get_all_game_lines(day_offset=day_offset)
+    games      = nba_svc.get_games(day_offset=day_offset)
+    matches    = []
+    for g in games:
+        eid = odds_svc.match_game_to_event(
+            g["home_team"]["name"], g["away_team"]["name"], events
+        )
+        matches.append({
+            "nba_home": g["home_team"]["name"],
+            "nba_away": g["away_team"]["name"],
+            "matched_event_id": eid,
+            "has_lines": eid in all_lines if eid else False,
+        })
+    return jsonify({
+        "quota": odds_svc.get_quota(),
+        "events_count": len(events),
+        "lines_count": len(all_lines),
+        "games_count": len(games),
+        "matches": matches,
+    })
+
+
 @app.route("/api/game/<event_id>/analysis")
 def api_game_analysis(event_id):
     """Generate a Claude write-up for a specific game (cached 1 h)."""
@@ -354,7 +381,7 @@ def api_games_top_pick():
     day_offset = request.args.get("day_offset", 0, type=int)
     from datetime import datetime as _dt
     import pytz as _pytz
-    _today = _dt.now(_pytz.timezone("America/New_York")).date()
+    _today = _dt.now(_pytz.timezone("America/Denver")).date()
     cache_key = f"top_pick_{day_offset}_{_today.isoformat()}"
     cached = cache.get(cache_key)
     if cached:
