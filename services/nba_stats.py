@@ -7,6 +7,7 @@ Cache TTL: 1 hour for stats, 30 min for today's games/rosters.
 import math
 import time
 import logging
+import concurrent.futures
 from datetime import datetime, timedelta
 
 import re
@@ -106,12 +107,21 @@ class NBAStatsService:
         try:
             time.sleep(NBA_API_DELAY)
             target_date = (today_mt + timedelta(days=day_offset)).isoformat()
-            sb = scoreboardv3.ScoreboardV3(
-                game_date=target_date,
-                league_id="00",
-                timeout=10,
-            )
-            dfs = sb.get_data_frames()
+
+            def _fetch():
+                return scoreboardv3.ScoreboardV3(
+                    game_date=target_date,
+                    league_id="00",
+                    timeout=10,
+                ).get_data_frames()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+                _future = _pool.submit(_fetch)
+                try:
+                    dfs = _future.result(timeout=15)
+                except concurrent.futures.TimeoutError:
+                    logger.error("NBA API timed out after 15s (offset=%s)", day_offset)
+                    return []
             games_df = dfs[1]   # one row per game
             teams_df = dfs[2]   # two rows per game (home + away teams)
 

@@ -38,6 +38,9 @@ init_db()
 # ── Global error handler (always return JSON, never HTML) ────────────────────
 @app.errorhandler(Exception)
 def handle_any_exception(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e  # Let Flask handle 404/405/etc normally
     logger.error("Unhandled exception: %s", e, exc_info=True)
     return jsonify({"success": False, "error": str(e)}), 500
 
