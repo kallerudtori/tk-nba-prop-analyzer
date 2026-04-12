@@ -109,7 +109,7 @@ class NBAStatsService:
             sb = scoreboardv3.ScoreboardV3(
                 game_date=target_date,
                 league_id="00",
-                timeout=30,
+                timeout=10,
             )
             dfs = sb.get_data_frames()
             games_df = dfs[1]   # one row per game
@@ -172,7 +172,7 @@ class NBAStatsService:
             return games
         except Exception as exc:
             logger.error("Error fetching games (offset=%s): %s", day_offset, exc, exc_info=True)
-            raise
+            return []
 
     # Keep old name as an alias so nothing else breaks
     def get_today_games(self) -> list:
