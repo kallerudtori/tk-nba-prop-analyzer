@@ -308,11 +308,17 @@ def api_debug_props():
     try:
         import requests as _req
         from services.odds import ODDS_API_BASE, MARKETS_PARAM
+        specific_id = request.args.get("event_id")
         events = odds_svc.get_nba_events(day_offset=0)
         if not events:
             return jsonify({"error": "no events found"})
+        if specific_id:
+            ev = next((e for e in events if e["id"] == specific_id), None)
+            events_to_check = [ev] if ev else []
+        else:
+            events_to_check = events[:5]
         results = []
-        for ev in events[:5]:  # check first 5 to avoid burning quota
+        for ev in events_to_check:  # check first 5 to avoid burning quota
             event_id = ev["id"]
             game_label = f"{ev.get('away_team')} @ {ev.get('home_team')}"
             resp = _req.get(
