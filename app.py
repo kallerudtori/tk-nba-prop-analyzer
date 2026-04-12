@@ -304,33 +304,37 @@ def api_debug_lines():
 
 @app.route("/api/debug/props")
 def api_debug_props():
-    """Debug: check if player prop markets are accessible for the first available game."""
+    """Debug: scan all today's events for DraftKings player prop availability."""
     try:
+        import requests as _req
+        from services.odds import ODDS_API_BASE, MARKETS_PARAM
         events = odds_svc.get_nba_events(day_offset=0)
         if not events:
             return jsonify({"error": "no events found"})
-        event_id = events[0]["id"]
-        game_label = f"{events[0].get('away_team')} @ {events[0].get('home_team')}"
-        import requests as _req
-        from services.odds import ODDS_API_BASE, MARKETS_PARAM
-        resp = _req.get(
-            f"{ODDS_API_BASE}/sports/basketball_nba/events/{event_id}/odds",
-            params={"apiKey": odds_svc.api_key, "regions": "us",
-                    "markets": MARKETS_PARAM, "oddsFormat": "american", "bookmakers": "draftkings"},
-            timeout=10,
-        )
-        data = resp.json()
-        if resp.status_code != 200:
-            return jsonify({"error": f"HTTP {resp.status_code}", "detail": data})
-        bms = data.get("bookmakers", [])
-        dk = next((b for b in bms if b["key"] == "draftkings"), None)
-        if not dk:
-            return jsonify({"game": game_label, "event_id": event_id,
-                            "error": "no draftkings bookmaker", "bookmakers": [b["key"] for b in bms]})
-        markets = [m["key"] for m in dk.get("markets", [])]
-        sample = dk["markets"][0]["outcomes"][:2] if dk.get("markets") else []
-        return jsonify({"game": game_label, "event_id": event_id,
-                        "dk_markets_available": markets, "sample_outcomes": sample})
+        results = []
+        for ev in events[:5]:  # check first 5 to avoid burning quota
+            event_id = ev["id"]
+            game_label = f"{ev.get('away_team')} @ {ev.get('home_team')}"
+            resp = _req.get(
+                f"{ODDS_API_BASE}/sports/basketball_nba/events/{event_id}/odds",
+                params={"apiKey": odds_svc.api_key, "regions": "us",
+                        "markets": MARKETS_PARAM, "oddsFormat": "american", "bookmakers": "draftkings"},
+                timeout=10,
+            )
+            odds_svc._store_quota(resp.headers)
+            data = resp.json()
+            if resp.status_code != 200:
+                results.append({"game": game_label, "error": f"HTTP {resp.status_code}"})
+                continue
+            bms = data.get("bookmakers", [])
+            dk = next((b for b in bms if b["key"] == "draftkings"), None)
+            if not dk:
+                results.append({"game": game_label, "dk_props": False,
+                                 "all_bookmakers": [b["key"] for b in bms]})
+            else:
+                markets = [m["key"] for m in dk.get("markets", [])]
+                results.append({"game": game_label, "dk_props": True, "markets": markets})
+        return jsonify({"results": results, "quota": odds_svc.get_quota()})
     except Exception as exc:
         return jsonify({"error": str(exc)})
 
