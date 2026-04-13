@@ -134,7 +134,13 @@ class OddsService:
                 resp.raise_for_status()
                 self._store_quota(resp.headers)
                 raw = resp.json()
-                self.cache.set(cache_key, raw, timeout=900)
+                # Only cache for full 15 min if DK actually has data;
+                # otherwise cache 2 min so we retry quickly once props go up
+                dk_present = any(
+                    b.get("key") == "draftkings"
+                    for b in raw.get("bookmakers", [])
+                )
+                self.cache.set(cache_key, raw, timeout=900 if dk_present else 120)
             except requests.RequestException as exc:
                 logger.error("Odds API props error event=%s: %s", event_id, exc)
                 return None
@@ -391,12 +397,15 @@ class OddsService:
     # ------------------------------------------------------------------ #
 
     def clear_cache(self, event_id: str | None = None):
+        today = datetime.now(pytz.timezone("America/Denver")).date()
         if event_id:
             self.cache.delete(f"props_{event_id}")
-        # Clear both today and tomorrow's event caches (use ET date)
-        today_et = datetime.now(pytz.timezone("America/Denver")).date()
-        self.cache.delete(f"nba_events_{today_et.isoformat()}")
-        self.cache.delete(f"nba_events_{(today_et + timedelta(days=1)).isoformat()}")
+            self.cache.delete(f"alt_spreads_{event_id}")
+        # Clear game lines + events for today and tomorrow
+        for offset in (0, 1):
+            d = (today + timedelta(days=offset)).isoformat()
+            self.cache.delete(f"nba_events_{d}")
+            self.cache.delete(f"game_lines_{d}")
 
     def get_quota(self) -> dict | None:
         return self._quota
