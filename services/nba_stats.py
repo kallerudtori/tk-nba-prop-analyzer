@@ -257,7 +257,7 @@ class NBAStatsService:
             )
             df_reg = log_ep.get_data_frames()[0]
 
-            # Also fetch playoff games if we're in playoff season
+            # Also fetch play-in and playoff games if we're in postseason
             df_playoff = pd.DataFrame()
             try:
                 time.sleep(NBA_API_DELAY)
@@ -271,8 +271,22 @@ class NBAStatsService:
             except Exception:
                 pass  # Playoffs not started yet or endpoint unavailable
 
-            if not df_playoff.empty:
-                df = pd.concat([df_playoff, df_reg], ignore_index=True)
+            df_playin = pd.DataFrame()
+            try:
+                time.sleep(NBA_API_DELAY)
+                log_pi = playergamelog.PlayerGameLog(
+                    player_id=player_id,
+                    season=CURRENT_SEASON,
+                    season_type_all_star="PlayIn",
+                    timeout=30,
+                )
+                df_playin = log_pi.get_data_frames()[0]
+            except Exception:
+                pass  # Play-In not active or endpoint unavailable
+
+            post_parts = [d for d in (df_playoff, df_playin) if not d.empty]
+            if post_parts:
+                df = pd.concat(post_parts + [df_reg], ignore_index=True)
                 # Re-sort most-recent first using parsed dates
                 df["_d"] = pd.to_datetime(
                     df["GAME_DATE"].apply(lambda x: str(x).title()),
@@ -463,28 +477,31 @@ class NBAStatsService:
                 for _, row in df.iterrows()
             ]
 
-            # Blend in playoff defensive data if available (40% weight)
-            try:
-                time.sleep(NBA_API_DELAY)
-                ep_po = leaguedashteamstats.LeagueDashTeamStats(
-                    season=CURRENT_SEASON,
-                    measure_type_detailed_defense="Opponent",
-                    per_mode_detailed="PerGame",
-                    season_type_all_star="Playoffs",
-                    timeout=30,
-                )
-                df_po = ep_po.get_data_frames()[0]
-                if not df_po.empty:
-                    po_lookup = {int(r["TEAM_ID"]): r for _, r in df_po.iterrows()}
+            # Blend in postseason defensive data if available (40% weight total)
+            # Try Playoffs first, then Play-In — whichever is available gets blended in.
+            for post_type in ("Playoffs", "PlayIn"):
+                try:
+                    time.sleep(NBA_API_DELAY)
+                    ep_post = leaguedashteamstats.LeagueDashTeamStats(
+                        season=CURRENT_SEASON,
+                        measure_type_detailed_defense="Opponent",
+                        per_mode_detailed="PerGame",
+                        season_type_all_star=post_type,
+                        timeout=30,
+                    )
+                    df_post = ep_post.get_data_frames()[0]
+                    if df_post.empty:
+                        continue
+                    post_lookup = {int(r["TEAM_ID"]): r for _, r in df_post.iterrows()}
                     for s in stats:
-                        if s["team_id"] in po_lookup:
-                            r = po_lookup[s["team_id"]]
+                        if s["team_id"] in post_lookup:
+                            r = post_lookup[s["team_id"]]
                             for key, col in [("opp_pts", "OPP_PTS"), ("opp_reb", "OPP_REB"),
                                              ("opp_ast", "OPP_AST"), ("opp_fg3m", "OPP_FG3M")]:
-                                po_val = float(r.get(col, s[key]))
-                                s[key] = round(s[key] * 0.6 + po_val * 0.4, 1)
-            except Exception:
-                pass  # Playoffs not available yet — regular season data is fine
+                                post_val = float(r.get(col, s[key]))
+                                s[key] = round(s[key] * 0.6 + post_val * 0.4, 1)
+                except Exception:
+                    continue  # That postseason bucket not available — try next
 
             self.cache.set(cache_key, stats, timeout=3600)
             return stats
