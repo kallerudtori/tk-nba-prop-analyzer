@@ -250,12 +250,37 @@ class NBAStatsService:
             team_id = int(info_df["TEAM_ID"].iloc[0]) if len(info_df) > 0 else 0
             jersey_number = str(info_df["JERSEY"].iloc[0]).strip() if len(info_df) > 0 else ""
 
-            # ---- game log ----
+            # ---- game log (regular season + playoffs merged) ----
             time.sleep(NBA_API_DELAY)
             log_ep = playergamelog.PlayerGameLog(
                 player_id=player_id, season=CURRENT_SEASON, timeout=30
             )
-            df = log_ep.get_data_frames()[0]
+            df_reg = log_ep.get_data_frames()[0]
+
+            # Also fetch playoff games if we're in playoff season
+            df_playoff = pd.DataFrame()
+            try:
+                time.sleep(NBA_API_DELAY)
+                log_po = playergamelog.PlayerGameLog(
+                    player_id=player_id,
+                    season=CURRENT_SEASON,
+                    season_type_all_star="Playoffs",
+                    timeout=30,
+                )
+                df_playoff = log_po.get_data_frames()[0]
+            except Exception:
+                pass  # Playoffs not started yet or endpoint unavailable
+
+            if not df_playoff.empty:
+                df = pd.concat([df_playoff, df_reg], ignore_index=True)
+                # Re-sort most-recent first using parsed dates
+                df["_d"] = pd.to_datetime(
+                    df["GAME_DATE"].apply(lambda x: str(x).title()),
+                    format="%b %d, %Y", errors="coerce"
+                )
+                df = df.sort_values("_d", ascending=False).drop(columns=["_d"]).reset_index(drop=True)
+            else:
+                df = df_reg
 
             if df.empty:
                 raise ValueError(f"No game log for player {player_id}")
@@ -437,6 +462,29 @@ class NBAStatsService:
                 }
                 for _, row in df.iterrows()
             ]
+
+            # Blend in playoff defensive data if available (40% weight)
+            try:
+                time.sleep(NBA_API_DELAY)
+                ep_po = leaguedashteamstats.LeagueDashTeamStats(
+                    season=CURRENT_SEASON,
+                    measure_type_detailed_defense="Opponent",
+                    per_mode_detailed="PerGame",
+                    season_type_all_star="Playoffs",
+                    timeout=30,
+                )
+                df_po = ep_po.get_data_frames()[0]
+                if not df_po.empty:
+                    po_lookup = {int(r["TEAM_ID"]): r for _, r in df_po.iterrows()}
+                    for s in stats:
+                        if s["team_id"] in po_lookup:
+                            r = po_lookup[s["team_id"]]
+                            for key, col in [("opp_pts", "OPP_PTS"), ("opp_reb", "OPP_REB"),
+                                             ("opp_ast", "OPP_AST"), ("opp_fg3m", "OPP_FG3M")]:
+                                po_val = float(r.get(col, s[key]))
+                                s[key] = round(s[key] * 0.6 + po_val * 0.4, 1)
+            except Exception:
+                pass  # Playoffs not available yet — regular season data is fine
 
             self.cache.set(cache_key, stats, timeout=3600)
             return stats

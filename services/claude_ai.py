@@ -7,8 +7,15 @@ Falls back to a rule-based analysis if ANTHROPIC_API_KEY is not set.
 import json
 import logging
 import os
+from datetime import date as _date
 
 logger = logging.getLogger(__name__)
+
+
+def _is_playoffs() -> bool:
+    """Returns True if today's date falls in NBA playoff season (mid-Apr through June)."""
+    today = _date.today()
+    return (today.month == 4 and today.day >= 13) or today.month in (5, 6)
 
 _client = None
 
@@ -132,9 +139,16 @@ def generate_top_pick(games: list) -> dict:
             f"{alt_text}\n"
         )
 
+    playoff_banner = (
+        "🏆 PLAYOFF SLATE — Key adjustments: totals run 5-8 pts lower than regular season; "
+        "defense is significantly tighter; elite closers outperform their regular season lines; "
+        "role players underperform; pace slows considerably. Factor all of this into every pick.\n\n"
+        if _is_playoffs() else ""
+    )
+
     prompt = f"""You are a sharp NBA betting analyst writing in an engaging expert style. Here are today's games:
 
-{lines_text}
+{playoff_banner}{lines_text}
 STEP 1 — ALT SPREAD EVALUATION (do this for every game before picking):
 - If a game has a main spread of 7+, check its alt spreads. If a line 3–5 pts tighter is available at -140 or better, that alt is the sharper play.
 - If you like a team but the main spread feels like too much margin, look for an alt that gives 3+ pts of cushion at ≤ -150. If found, that's your pick.
@@ -277,9 +291,19 @@ def _build_prompt(ctx: dict) -> str:
     else:
         alt_section = "Alternate Spreads: not available"
 
+    playoff_note = (
+        "🏆 PLAYOFF CONTEXT: This is an NBA Playoff game. Factor in: significantly tighter "
+        "defense and slower pace than regular season; stars play heavier minutes; role players "
+        "see reduced usage; totals run 5-8 pts lower than regular season averages; series "
+        "history and matchup familiarity matter; back-to-back fatigue is not applicable "
+        "(playoff schedules have rest days). Adjust projections DOWN for secondary scorers "
+        "and UP for elite closers and primary ball-handlers.\n\n"
+        if _is_playoffs() else ""
+    )
+
     return f"""You are a sharp NBA betting analyst writing in an engaging, authoritative style.
 
-Game: {away}{rec_away} @ {home}{rec_home}
+{playoff_note}Game: {away}{rec_away} @ {home}{rec_home}
 Tip-off: {ctx.get("game_time", "TBD")}
 Fatigue: {b2b_line}
 
