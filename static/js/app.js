@@ -457,7 +457,7 @@ function buildAnalysisCard(analysis) {
     const activeProp = card.querySelector(".prop-tab.active")?.dataset.prop ?? "points";
     const prop = props[activeProp];
     if (!prop.has_odds) {
-      showToast("No DraftKings line available for this prop.", "error");
+      showToast("No sportsbook line available for this prop.", "error");
       return;
     }
     parlayAddLeg({
@@ -501,6 +501,14 @@ function updateCardForProp(card, analysis, propKey) {
 
   lineEl.textContent = prop.has_odds ? prop.line : "N/A";
   projEl.textContent = prop.projection ?? "—";
+
+  // Line label reflects the actual sportsbook (DraftKings preferred; falls back
+  // to FanDuel/BetRivers/etc. when DK is absent from the odds feed).
+  const lineLabelEl = lineEl.closest(".proj-block")?.querySelector(".proj-label");
+  if (lineLabelEl) {
+    lineLabelEl.textContent = (prop.has_odds && prop.source)
+      ? `${prop.source} Line` : "DK Line";
+  }
 
   if (prop.edge != null) {
     const sign = prop.edge >= 0 ? "+" : "";

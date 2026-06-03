@@ -554,6 +554,7 @@ def player_analysis(player_id):
                         "line": line,
                         "over_odds": od["over_odds"],
                         "under_odds": od["under_odds"],
+                        "source": od.get("source", "DraftKings"),
                         "edge": edge,
                         "value_label": model.calculate_value_label(edge),
                         "implied_prob_over": od["implied_prob_over"],
