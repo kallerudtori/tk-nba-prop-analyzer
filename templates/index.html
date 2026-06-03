@@ -64,9 +64,20 @@
     <section class="sidebar-section" id="player-select-section" style="display:none">
       <div class="section-header">
         <h2 class="section-title">Players</h2>
-        <button class="btn btn-ghost btn-xs" id="close-roster-btn">✕ Close</button>
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-ghost btn-xs" id="injuries-btn">🏥 Injuries</button>
+          <button class="btn btn-ghost btn-xs" id="close-roster-btn">✕ Close</button>
+        </div>
       </div>
       <div class="team-tabs" id="team-tabs"></div>
+      <!-- Finals Mode toggle (Feature 2) — only shown for NBA Finals games -->
+      <div class="finals-toggle-bar hidden" id="finals-toggle-bar">
+        <label class="finals-toggle">
+          <input type="checkbox" id="finals-mode-toggle">
+          <span class="finals-toggle-label">🏆 Finals Mode</span>
+        </label>
+        <span class="finals-toggle-meta" id="finals-toggle-meta"></span>
+      </div>
       <div id="roster-container">
         <div class="skeleton-list">
           <div class="skeleton-item"></div>
@@ -175,6 +186,44 @@
   </a>
 </nav>
 
+<!-- ═══════════════════════════ INJURY OVERRIDE MODAL ════════════════════════ -->
+<div id="injury-modal" class="modal-overlay hidden">
+  <div class="modal-box injury-modal-box">
+    <div class="modal-header">
+      <h2 class="modal-title">🏥 Manual Injury Overrides</h2>
+      <button class="modal-close" id="injury-modal-close">✕</button>
+    </div>
+    <p class="muted-text small">
+      Overrides win over the live ESPN feed — use these when news drops before the feed catches up.
+      Scoped to today's slate.
+    </p>
+
+    <!-- Add override form -->
+    <div class="injury-form">
+      <select id="inj-player-select" class="inj-input"></select>
+      <select id="inj-status-select" class="inj-input">
+        <option value="Active">Active</option>
+        <option value="Questionable">Questionable</option>
+        <option value="GTD">GTD</option>
+        <option value="Doubtful">Doubtful</option>
+        <option value="Out">Out</option>
+      </select>
+      <input type="text" id="inj-notes" class="inj-input" placeholder="Notes (optional)" />
+      <button class="btn btn-green btn-sm" id="inj-add-btn">Add</button>
+    </div>
+
+    <!-- Active overrides list -->
+    <div class="injury-overrides-list">
+      <div class="section-header">
+        <h3 class="section-title small">Active Overrides Today</h3>
+      </div>
+      <div id="inj-overrides-container">
+        <p class="muted-text small">No manual overrides.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════════════════════ TEMPLATES ════════════════════════════════════ -->
 
 <!-- Game Card Template -->
@@ -210,6 +259,7 @@
       <div>
         <span class="player-row-name"></span>
         <span class="player-row-pos"></span>
+        <span class="player-row-injury hidden"></span>
       </div>
     </div>
     <button class="btn-analyze">Analyze</button>
@@ -230,10 +280,30 @@
         </div>
       </div>
       <div class="card-header-actions">
+        <span class="injury-badge hidden"></span>
         <span class="player-number"></span>
         <span class="games-played-badge"></span>
         <button class="btn-close-card" title="Remove">✕</button>
       </div>
+    </div>
+
+    <!-- Injury Impact section (Feature 1) -->
+    <div class="injury-impact hidden">
+      <div class="injury-impact-header">
+        <span class="injury-impact-icon">🏥</span>
+        <span class="injury-impact-title">Injury Impact</span>
+      </div>
+      <div class="injury-impact-body"></div>
+    </div>
+
+    <!-- Finals Context section (Feature 2) -->
+    <div class="finals-context hidden">
+      <div class="finals-context-header">
+        <span class="finals-context-icon">🏆</span>
+        <span class="finals-context-title">Finals Context</span>
+        <span class="finals-context-game"></span>
+      </div>
+      <div class="finals-context-body"></div>
     </div>
 
     <!-- Prop Tabs -->

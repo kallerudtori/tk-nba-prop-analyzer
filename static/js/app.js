@@ -22,6 +22,7 @@ const AppState = {
   selectedPlayers: new Set(),
   analyses: {},            // playerId → full analysis object
   activePlayerId: null,    // currently visible tab
+  finalsMode: false,       // Finals Mode toggle (Feature 2) — OFF by default
 };
 
 /* ══════════════════════════════════════════════════════════════════════════ *
@@ -34,6 +35,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("refresh-odds-btn").addEventListener("click", handleRefreshOdds);
   document.getElementById("close-roster-btn").addEventListener("click", closeRosterPanel);
+
+  // Injury override modal (Feature 1)
+  document.getElementById("injuries-btn")?.addEventListener("click", openInjuryModal);
+  document.getElementById("injury-modal-close")?.addEventListener("click", closeInjuryModal);
+  document.getElementById("injury-modal")?.addEventListener("click", e => {
+    if (e.target.id === "injury-modal") closeInjuryModal();
+  });
+  document.getElementById("inj-add-btn")?.addEventListener("click", submitInjuryOverride);
 
   // Day tabs (Today / Tomorrow)
   document.querySelectorAll(".day-tab").forEach(btn => {
@@ -158,6 +167,9 @@ async function loadRosters(game) {
       ${game.away_team.abbreviation}
     </button>`;
 
+  // Finals Mode toggle (Feature 2) — only for NBA Finals games
+  setupFinalsToggle(game);
+
   // Fetch both rosters in parallel
   try {
     const [homeData, awayData] = await Promise.all([
@@ -208,6 +220,25 @@ function renderRoster(team) {
     row.querySelector(".player-row-name").textContent = player.name;
     row.querySelector(".player-row-pos").textContent  = player.position || "";
 
+    // Injury status badge (Feature 1)
+    const injEl  = row.querySelector(".player-row-injury");
+    const status = player.injury_status || "Active";
+    if (injEl) {
+      if (status !== "Active") {
+        injEl.textContent = _injuryShort(status);
+        injEl.className   = `player-row-injury ${_injuryCls(status)}`;
+        injEl.title       = player.injury_desc || status;
+        row.classList.add(_injuryRowCls(status));
+      } else if (player.injury_boosted) {
+        injEl.textContent = "⬆ INJ";
+        injEl.className   = "player-row-injury boosted";
+        injEl.title       = "Projected to absorb minutes from injured teammates";
+        row.classList.add("row-boosted");
+      } else {
+        injEl.classList.add("hidden");
+      }
+    }
+
     if (AppState.selectedPlayers.has(player.player_id)) {
       row.classList.add("selected");
     }
@@ -234,6 +265,70 @@ function closeRosterPanel() {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ *
+ *  Finals Mode toggle (Feature 2)                                            *
+ * ══════════════════════════════════════════════════════════════════════════ */
+function setupFinalsToggle(game) {
+  const bar    = document.getElementById("finals-toggle-bar");
+  const toggle = document.getElementById("finals-mode-toggle");
+  const meta   = document.getElementById("finals-toggle-meta");
+  if (!bar || !toggle) return;
+
+  if (!game.is_finals) {
+    bar.classList.add("hidden");
+    AppState.finalsMode = false;
+    toggle.checked = false;
+    return;
+  }
+
+  // Finals game → reveal toggle (OFF by default each time a game is opened)
+  bar.classList.remove("hidden");
+  AppState.finalsMode = false;
+  toggle.checked = false;
+  const gnum = game.finals_game_number || 1;
+  meta.textContent = `Game ${gnum} of the NBA Finals`;
+
+  // Re-bind to avoid stacking listeners across game switches
+  toggle.onchange = () => {
+    AppState.finalsMode = toggle.checked;
+    showToast(
+      toggle.checked ? "🏆 Finals Mode ON — re-analyzing open players"
+                     : "Finals Mode OFF — reverting to standard model",
+      toggle.checked ? "success" : "info"
+    );
+    reanalyzeOpenPlayers();
+  };
+
+  // Kick off a one-time backfill of prior Finals games so in-series form is
+  // available (idempotent; safe to call repeatedly).
+  if (game.game_id && (game.finals_game_number || 1) > 1) {
+    apiFetch("/api/finals/backfill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ game_id: game.game_id }),
+    }).catch(() => { /* non-fatal */ });
+  }
+}
+
+/** Re-run analysis for every open player card (used when Finals Mode flips). */
+function reanalyzeOpenPlayers() {
+  const game = AppState.selectedGame;
+  if (!game) return;
+  const ids = Array.from(AppState.selectedPlayers);
+  for (const pid of ids) {
+    const a = AppState.analyses[pid];
+    if (!a) continue;
+    const isHome = a.player.team_id === game.home_team.id;
+    const oppTeamId = isHome ? game.away_team.id : game.home_team.id;
+    // Remove the existing card/tab then reload fresh
+    removePlayerCard(pid);
+    loadPlayerAnalysis(
+      { player_id: pid, name: a.player.name },
+      game, oppTeamId, isHome
+    );
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ *
  *  Player Analysis                                                           *
  * ══════════════════════════════════════════════════════════════════════════ */
 async function loadPlayerAnalysis(player, game, opponentTeamId, isHome) {
@@ -252,6 +347,8 @@ async function loadPlayerAnalysis(player, game, opponentTeamId, isHome) {
     opponent_team_id: opponentTeamId,
     is_home: isHome ? "true" : "false",
     odds_event_id: game.odds_event_id || "",
+    finals_mode: AppState.finalsMode ? "true" : "false",
+    game_id: game.game_id || "",
   });
 
   try {
@@ -268,10 +365,17 @@ async function loadPlayerAnalysis(player, game, opponentTeamId, isHome) {
     // On mobile, jump to the Analysis tab automatically
     mobileActivatePanel("main-panel");
 
-    // Register all props as value picks
+    // Register all props as value picks.
+    // OUT/Doubtful players are excluded from Value Picks & Auto-Suggest
+    // (their projection is zeroed and they shouldn't be bet).
     const a = data.analysis;
+    const ownStatus = a.player.injury_status || "Active";
+    const excludeFromPicks = ownStatus === "Out" || ownStatus === "Doubtful";
+    if (excludeFromPicks) {
+      showToast(`${a.player.name} is ${ownStatus} — excluded from value picks.`, "error");
+    }
     for (const [propKey, prop] of Object.entries(a.props)) {
-      if (prop.has_odds) {
+      if (prop.has_odds && !excludeFromPicks) {
         parlayRegisterValuePick({
           playerId:   a.player.id,
           playerName: a.player.name,
@@ -284,6 +388,7 @@ async function loadPlayerAnalysis(player, game, opponentTeamId, isHome) {
           modelProj:  prop.projection,
           modelConf:  prop.confidence,
           valueLabel: prop.value_label,
+          ownStatus:  ownStatus,
           gameLabel:  `${game.away_team.abbreviation} @ ${game.home_team.abbreviation}`,
         });
       }
@@ -326,6 +431,12 @@ function buildAnalysisCard(analysis) {
   if (jerseyEl && player.jersey_number) {
     jerseyEl.textContent = `#${player.jersey_number}`;
   }
+
+  // Injury banner + impact section (Feature 1)
+  renderInjuryImpact(card, analysis);
+
+  // Finals Context section (Feature 2)
+  renderFinalsContext(card, analysis);
 
   // Close button
   card.querySelector(".btn-close-card").addEventListener("click", () => {
@@ -441,6 +552,119 @@ function updateCardForProp(card, analysis, propKey) {
   requestAnimationFrame(() => {
     renderAllCharts(card, player.id, propKey, analysis);
   });
+}
+
+/* ── Injury Impact rendering (Feature 1) ──────────────────────────────────── */
+function renderInjuryImpact(card, analysis) {
+  const imp    = analysis.injury_impact;
+  const status = analysis.player.injury_status || "Active";
+
+  // Header badge: own status (uncertain/out) takes priority, else boost badge
+  const badge = card.querySelector(".injury-badge");
+  if (badge) {
+    if (status !== "Active") {
+      badge.textContent = _injuryShort(status);
+      badge.className   = `injury-badge ${_injuryCls(status)}`;
+    } else if (imp && imp.is_boosted) {
+      badge.textContent = "⬆ INJ BOOST";
+      badge.className   = "injury-badge boosted";
+    } else {
+      badge.classList.add("hidden");
+    }
+  }
+
+  const section = card.querySelector(".injury-impact");
+  const body    = card.querySelector(".injury-impact-body");
+  if (!section || !body || !imp) return;
+
+  const hasOwn      = status !== "Active";
+  const hasBoost    = imp.is_boosted;
+  const hasOuts     = (imp.out_players || []).length > 0;
+  if (!hasOwn && !hasBoost && !hasOuts) {
+    section.classList.add("hidden");
+    return;
+  }
+
+  const rows = [];
+
+  if (hasOwn) {
+    const label = status === "Out"
+      ? "Projected as <strong>OUT</strong> — projection zeroed; excluded from picks."
+      : `Own status <strong>${status}</strong> — projection &amp; confidence discounted.`;
+    rows.push(`<div class="inj-line ${_injuryRowCls(status)}">⚠️ ${label}</div>`);
+  }
+
+  if (hasBoost) {
+    const min = imp.min_boost ? `+${imp.min_boost} min` : "";
+    const usg = imp.usg_boost >= 0.01 ? `+${(imp.usg_boost * 100).toFixed(1)}% usg` : "";
+    const parts = [min, usg].filter(Boolean).join(", ");
+    const primary = imp.is_primary ? " <span class='inj-primary'>PRIMARY</span>" : "";
+    rows.push(`<div class="inj-line boosted">⬆ Absorbing ${parts}${primary}</div>`);
+    (imp.reasons || []).forEach(r => {
+      rows.push(`<div class="inj-reason">• ${r}</div>`);
+    });
+  }
+
+  if (hasOuts) {
+    const outs = imp.out_players
+      .map(o => `${o.name} (${o.status})`)
+      .join(", ");
+    rows.push(`<div class="inj-reason">Team absences: ${outs}</div>`);
+  }
+
+  if (imp.summary) {
+    rows.push(`<div class="inj-summary">${imp.summary}</div>`);
+  }
+
+  body.innerHTML = rows.join("");
+  section.classList.remove("hidden");
+}
+
+/* ── Finals Context section (Feature 2) ───────────────────────────────────── */
+function renderFinalsContext(card, analysis) {
+  const section = card.querySelector(".finals-context");
+  const body    = card.querySelector(".finals-context-body");
+  const gameEl  = card.querySelector(".finals-context-game");
+  const fc      = analysis.finals_context;
+  if (!section || !body) return;
+
+  // Only render when Finals Mode is actually active for this analysis
+  if (!fc || !fc.active) {
+    section.classList.add("hidden");
+    return;
+  }
+
+  if (gameEl) gameEl.textContent = `Game ${fc.game_number}`;
+
+  const pct = fc.history_weight != null
+    ? `${Math.round(fc.history_weight * 100)}%` : "0%";
+  const rows = [];
+
+  rows.push(
+    `<div class="finals-line">Finals-form weight: <strong>${pct}</strong>` +
+    (fc.has_finals_data
+      ? ` (blending ${fc.finals_games || 0} prior Finals game${(fc.finals_games || 0) === 1 ? "" : "s"})`
+      : " (no in-series sample yet)") +
+    `</div>`
+  );
+  if (fc.pace_factor != null) {
+    rows.push(`<div class="finals-line">Pace factor: <strong>×${fc.pace_factor}</strong> (Finals slowdown)</div>`);
+  }
+  if (fc.is_star) {
+    rows.push(`<div class="finals-line">Focal scorer${fc.game_number >= 3 ? " — isolation premium applied (G3+)" : ""}</div>`);
+  }
+  if (fc.is_bench) {
+    rows.push(`<div class="finals-line">Deep-bench — rotation compression applied</div>`);
+  }
+  if (fc.series_summary) {
+    rows.push(`<div class="finals-summary">Series: ${fc.series_summary}</div>`);
+  }
+  (fc.notes || []).forEach(n => {
+    rows.push(`<div class="finals-reason">• ${n}</div>`);
+  });
+
+  body.innerHTML = rows.join("");
+  section.classList.remove("hidden");
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ *
@@ -575,6 +799,119 @@ async function handleRefreshOdds() {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ *
+ *  Injury Override Modal (Feature 1)                                          *
+ * ══════════════════════════════════════════════════════════════════════════ */
+function openInjuryModal() {
+  const game = AppState.selectedGame;
+  if (!game) {
+    showToast("Select a game first.", "error");
+    return;
+  }
+  // Populate the player dropdown from both rosters
+  const select = document.getElementById("inj-player-select");
+  if (select) {
+    const opts = [];
+    [["home", game.home_team], ["away", game.away_team]].forEach(([side, team]) => {
+      (AppState.rosters[side] || []).forEach(p => {
+        opts.push(
+          `<option value="${p.player_id}" data-team-id="${team.id}" data-name="${p.name}">`
+          + `${p.name} (${team.abbreviation})</option>`
+        );
+      });
+    });
+    select.innerHTML = opts.join("") || '<option value="">No roster loaded</option>';
+  }
+  document.getElementById("injury-modal")?.classList.remove("hidden");
+  loadInjuryOverrides();
+}
+
+function closeInjuryModal() {
+  document.getElementById("injury-modal")?.classList.add("hidden");
+}
+
+async function loadInjuryOverrides() {
+  const container = document.getElementById("inj-overrides-container");
+  if (!container) return;
+  try {
+    const data = await apiFetch("/api/injuries");
+    const overrides = data.overrides || [];
+    if (!overrides.length) {
+      container.innerHTML = '<p class="muted-text small">No manual overrides.</p>';
+      return;
+    }
+    container.innerHTML = overrides.map(o => `
+      <div class="inj-override-row">
+        <div>
+          <span class="inj-override-name">${o.player_name || `#${o.player_id}`}</span>
+          <span class="player-row-injury ${_injuryCls(o.status)}">${_injuryShort(o.status) || o.status}</span>
+          ${o.notes ? `<span class="muted-text small"> — ${o.notes}</span>` : ""}
+        </div>
+        <button class="leg-remove" onclick="deleteInjuryOverride(${o.id})" title="Remove">✕</button>
+      </div>
+    `).join("");
+  } catch (err) {
+    container.innerHTML = `<p class="muted-text small">Failed to load: ${err.message}</p>`;
+  }
+}
+
+async function submitInjuryOverride() {
+  const select  = document.getElementById("inj-player-select");
+  const opt      = select?.selectedOptions[0];
+  if (!opt || !opt.value) {
+    showToast("No player selected.", "error");
+    return;
+  }
+  const status = document.getElementById("inj-status-select").value;
+  const notes  = document.getElementById("inj-notes").value.trim();
+  const payload = {
+    player_id:   parseInt(opt.value, 10),
+    player_name: opt.dataset.name,
+    team_id:     parseInt(opt.dataset.teamId, 10),
+    status,
+    notes,
+  };
+  try {
+    await apiFetch("/api/injuries/override", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    showToast(`Override set: ${opt.dataset.name} → ${status}`, "success");
+    document.getElementById("inj-notes").value = "";
+    await loadInjuryOverrides();
+    await refreshRosters();
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, "error");
+  }
+}
+
+async function deleteInjuryOverride(overrideId) {
+  try {
+    await apiFetch(`/api/injuries/override/${overrideId}`, { method: "DELETE" });
+    showToast("Override removed.", "success");
+    await loadInjuryOverrides();
+    await refreshRosters();
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, "error");
+  }
+}
+
+/** Re-fetch both rosters (injury statuses changed) and re-render current tab. */
+async function refreshRosters() {
+  const game = AppState.selectedGame;
+  if (!game) return;
+  try {
+    const [homeData, awayData] = await Promise.all([
+      apiFetch(`/api/team/${game.home_team.id}/roster`),
+      apiFetch(`/api/team/${game.away_team.id}/roster`),
+    ]);
+    AppState.rosters.home = homeData.roster || [];
+    AppState.rosters.away = awayData.roster || [];
+    renderRoster(AppState.activeTeamTab);
+  } catch (_) { /* silent */ }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ *
  *  Utility                                                                   *
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -627,6 +964,26 @@ function _valueBadgeCls(label) {
   if (label === "Slight Value") return "slight";
   if (label === "No Odds")      return "no-odds";
   return "avoid";
+}
+
+/* ── Injury status helpers (Feature 1) ────────────────────────────────────── */
+function _injuryShort(status) {
+  const map = {
+    Out: "OUT", Doubtful: "DTD", Questionable: "Q", GTD: "GTD", Active: "",
+  };
+  return map[status] ?? status;
+}
+
+function _injuryCls(status) {
+  if (status === "Out" || status === "Doubtful") return "inj-out";
+  if (status === "Questionable" || status === "GTD") return "inj-uncertain";
+  return "";
+}
+
+function _injuryRowCls(status) {
+  if (status === "Out" || status === "Doubtful") return "row-out";
+  if (status === "Questionable" || status === "GTD") return "row-uncertain";
+  return "";
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ *

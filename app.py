@@ -25,14 +25,130 @@ logger = logging.getLogger(__name__)
 # ── Services & Model (lazy-imported so Flask app object exists first) ─────────
 from services.nba_stats import NBAStatsService
 from services.odds import OddsService
+from services import injuries as injuries_svc
+from services import finals as finals_svc
 from models.projection import ProjectionModel
+from models.injury_model import redistribute
+from models.finals_model import FinalsAdjuster
 from database.db import init_db
 
 nba_svc = NBAStatsService(cache)
 odds_svc = OddsService(cache)
 model = ProjectionModel()
+finals_adjuster = FinalsAdjuster()
 
 init_db()
+
+
+# ── Injury report helper (Feature 1) ─────────────────────────────────────────
+# Track team-injury cache keys so we can bust them on refresh (SimpleCache has
+# no key-pattern deletion).
+_INJURY_CACHE_KEYS: set = set()
+
+
+def clear_injury_caches() -> None:
+    """Bust the ESPN feed + every per-team injury report we've built."""
+    cache.delete("injuries_espn")
+    for key in list(_INJURY_CACHE_KEYS):
+        cache.delete(key)
+    _INJURY_CACHE_KEYS.clear()
+
+
+def _today_mt_iso() -> str:
+    from datetime import datetime
+    import pytz
+    return datetime.now(pytz.timezone("America/Denver")).date().isoformat()
+
+
+def build_team_injury_report(team_id: int, game_date: str | None = None) -> dict:
+    """
+    Merge roster + usage + injury statuses for a team, run the minute
+    redistribution model, and cache the result (10 min — statuses move
+    fast near tip-off). Returns {players, redistribution, game_date}.
+    """
+    game_date = game_date or _today_mt_iso()
+    cache_key = f"team_injuries_{team_id}_{game_date}"
+    _INJURY_CACHE_KEYS.add(cache_key)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    roster     = nba_svc.get_team_roster(team_id)
+    usage      = nba_svc.get_team_player_usage(team_id)
+    injury_map = injuries_svc.get_injury_map(cache, game_date)
+
+    players = []
+    for p in roster:
+        pid = p["player_id"]
+        u   = usage.get(pid, {})
+        st  = injuries_svc.status_for_player(injury_map, pid, p["name"])
+        players.append({
+            "player_id":     pid,
+            "name":          p["name"],
+            "position":      p.get("position", ""),
+            "min":           u.get("min", 0.0),
+            "usg":           u.get("usg", 0.0),
+            "status":        st["status"],
+            "status_source": st.get("source", "default"),
+            "status_desc":   st.get("description", ""),
+        })
+
+    report = {
+        "players":        players,
+        "redistribution": redistribute(players),
+        "game_date":      game_date,
+    }
+    cache.set(cache_key, report, timeout=600)
+    return report
+
+
+def _injury_note_for_game(home_team_id, away_team_id,
+                          home_name: str, away_name: str) -> str:
+    """
+    Build a compact plain-text injury summary for both teams, suitable for
+    injecting into a Claude prompt. Returns "" if neither team has impact.
+    """
+    parts = []
+    for tid, tname in ((away_team_id, away_name), (home_team_id, home_name)):
+        if not tid:
+            continue
+        try:
+            rep = build_team_injury_report(tid)
+        except Exception:
+            continue
+        redist = rep.get("redistribution", {})
+        if not redist.get("has_impact"):
+            continue
+        summary = redist.get("summary", "").strip()
+        if summary:
+            parts.append(f"- {tname}: {summary}")
+    return "\n".join(parts)
+
+
+def _finals_note_for_game(game_id: str, game_date: str | None = None) -> str:
+    """
+    Compact Finals-series summary for a Claude prompt. Returns "" when the game
+    isn't the Finals. Only invoked when Finals Mode is active for the request.
+    """
+    if not finals_svc.is_finals_game(game_id, game_date):
+        return ""
+    year = finals_svc.finals_season_year(game_id, game_date)
+    gnum = finals_svc.finals_game_number(game_id)
+    rec  = finals_svc.series_record(year)
+    pace = ""
+    parts = [
+        f"- This is Game {gnum} of the NBA Finals.",
+        f"- Series so far: {rec.get('summary', 'no games recorded')}.",
+        "- Finals basketball: tighter halfcourt defense, 2-4 fewer possessions "
+        "per game than the regular season, shortened rotations (deep bench loses "
+        "minutes), and elite scorers get more late-clock isolation looks from G3 on.",
+    ]
+    if gnum <= 1:
+        parts.append("- No in-series sample yet — lean on the structural projection.")
+    else:
+        parts.append(f"- {gnum - 1} prior Finals game(s) of form should weigh more "
+                     "heavily as the series progresses.")
+    return "\n".join(parts)
 
 
 # ── Global error handler (always return JSON, never HTML) ────────────────────
@@ -85,11 +201,23 @@ def today_games():
     try:
         games = nba_svc.get_games(day_offset=day_offset)
         events = odds_svc.get_nba_events(day_offset=day_offset)
+        from datetime import datetime, timedelta
+        import pytz
+        game_date = (
+            datetime.now(pytz.timezone("America/Denver")).date()
+            + timedelta(days=day_offset)
+        ).isoformat()
         for game in games:
             game["odds_event_id"] = odds_svc.match_game_to_event(
                 game["home_team"]["name"],
                 game["away_team"]["name"],
                 events,
+            )
+            # Finals detection (Feature 2) — flag games so the UI can show the toggle
+            gid = game.get("game_id", "")
+            game["is_finals"] = finals_svc.is_finals_game(gid, game_date)
+            game["finals_game_number"] = (
+                finals_svc.finals_game_number(gid) if game["is_finals"] else None
             )
         return jsonify({"success": True, "games": games, "day_offset": day_offset})
     except Exception as exc:
@@ -103,10 +231,181 @@ def today_games():
 def team_roster(team_id):
     try:
         roster = nba_svc.get_team_roster(team_id)
+        # Attach injury status to each roster player (Feature 1)
+        try:
+            report = build_team_injury_report(team_id)
+            status_by_id = {p["player_id"]: p for p in report["players"]}
+            for player in roster:
+                info = status_by_id.get(player["player_id"])
+                if info:
+                    player["injury_status"] = info["status"]
+                    player["injury_source"] = info["status_source"]
+                    player["injury_desc"]   = info["status_desc"]
+                    boost = report["redistribution"]["boosts"].get(player["player_id"])
+                    # Only flag a meaningful bump in the roster list to avoid a
+                    # sea of badges when one rotation player's minutes spread thin.
+                    player["injury_boosted"] = bool(
+                        boost and (boost.get("min_boost", 0.0) >= 2.0
+                                   or boost.get("is_primary"))
+                    )
+                else:
+                    player["injury_status"] = "Active"
+                    player["injury_boosted"] = False
+        except Exception as exc:
+            logger.warning("roster injury enrich failed team=%s: %s", team_id, exc)
         return jsonify({"success": True, "roster": roster})
     except Exception as exc:
         logger.error("team_roster error: %s", exc, exc_info=True)
         return jsonify({"success": False, "error": str(exc)}), 500
+
+
+# ── Team Injury Report (Feature 1) ────────────────────────────────────────────
+
+@app.route("/api/team/<int:team_id>/injuries")
+def team_injuries(team_id):
+    """Full injury report + minute redistribution for a team."""
+    try:
+        report = build_team_injury_report(team_id, request.args.get("game_date"))
+        return jsonify({"success": True, **report})
+    except Exception as exc:
+        logger.error("team_injuries error team=%s: %s", team_id, exc, exc_info=True)
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+# ── Manual Injury Overrides (Feature 1) ───────────────────────────────────────
+
+@app.route("/api/injuries/override", methods=["POST"])
+def injury_override():
+    data = request.get_json(force=True)
+    status = (data.get("status") or "").strip()
+    if status not in injuries_svc.VALID_STATUSES:
+        return jsonify({"success": False,
+                        "error": f"status must be one of {sorted(injuries_svc.VALID_STATUSES)}"}), 400
+    game_date = data.get("game_date") or _today_mt_iso()
+    team_id = data.get("team_id")
+    new_id = injuries_svc.add_override(
+        player_id=data.get("player_id"),
+        player_name=data.get("player_name"),
+        team_id=team_id,
+        status=status,
+        notes=data.get("notes"),
+        game_date=game_date,
+    )
+    # Bust the cached report so the override takes effect immediately
+    if team_id:
+        cache.delete(f"team_injuries_{team_id}_{game_date}")
+    return jsonify({"success": True, "id": new_id}), 201
+
+
+@app.route("/api/injuries", methods=["GET"])
+def list_injuries():
+    game_date = request.args.get("game_date") or _today_mt_iso()
+    return jsonify({"success": True, "overrides": injuries_svc.list_overrides(game_date),
+                    "game_date": game_date})
+
+
+@app.route("/api/injuries/override/<int:override_id>", methods=["DELETE"])
+def delete_injury_override(override_id):
+    injuries_svc.delete_override(override_id)
+    # We don't know which team this override belonged to, so bust every cached
+    # team report (and the ESPN feed) to guarantee the removal takes effect.
+    clear_injury_caches()
+    return jsonify({"success": True})
+
+
+# ── Finals Mode (Feature 2) ───────────────────────────────────────────────────
+
+def _finals_game_id_for(game_id: str, game_number: int) -> str:
+    """Derive the 10-char id of game N in the same Finals series by swapping
+    the trailing two-digit game counter."""
+    gid = str(game_id or "")
+    if len(gid) < 2:
+        return gid
+    return gid[:-2] + f"{int(game_number):02d}"
+
+
+@app.route("/api/finals/state")
+def finals_state():
+    """Series state for a Finals game: record, games recorded, game number."""
+    game_id   = request.args.get("game_id", "")
+    game_date = request.args.get("game_date")
+    if not finals_svc.is_finals_game(game_id, game_date):
+        return jsonify({"success": True, "is_finals": False})
+    year = finals_svc.finals_season_year(game_id, game_date)
+    return jsonify({
+        "success":      True,
+        "is_finals":    True,
+        "year":         year,
+        "game_number":  finals_svc.finals_game_number(game_id),
+        "record":       finals_svc.series_record(year),
+        "games":        finals_svc.get_series_games(year),
+    })
+
+
+@app.route("/api/finals/backfill", methods=["POST"])
+def finals_backfill():
+    """
+    Backfill prior games of the current Finals series from box scores.
+
+    Body: {"game_id": "<a Finals game id>", "through": <int, optional>}
+    Derives the ids of games 1..(current-1) (or 1..through) by swapping the
+    trailing game counter, fetches each box score, and persists the game
+    result + every player's line so the in-series Finals average is available.
+    """
+    data    = request.get_json(force=True) or {}
+    game_id = str(data.get("game_id", ""))
+    if not finals_svc.is_finals_game(game_id):
+        return jsonify({"success": False, "error": "not a Finals game id"}), 400
+
+    year        = finals_svc.finals_season_year(game_id)
+    current_num = finals_svc.finals_game_number(game_id)
+    through     = int(data.get("through") or (current_num - 1))
+    through     = max(0, min(through, finals_svc.FINALS_MAX_GAMES))
+
+    recorded, errors = [], []
+    for gnum in range(1, through + 1):
+        gid = _finals_game_id_for(game_id, gnum)
+        try:
+            box = nba_svc.get_finals_boxscore(gid)
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"game_number": gnum, "error": str(exc)})
+            continue
+        if not box:
+            errors.append({"game_number": gnum, "error": "no boxscore data"})
+            continue
+
+        # Aggregate team scores from the box lines (winner is score-driven, so
+        # the home/away slot assignment is immaterial to series_record).
+        team_pts: dict = {}
+        for r in box:
+            abbr = r.get("team_abbr") or "?"
+            team_pts[abbr] = team_pts.get(abbr, 0.0) + float(r.get("pts", 0) or 0)
+        teams = list(team_pts.keys())
+        away_team = teams[0] if teams else None
+        home_team = teams[1] if len(teams) > 1 else None
+        away_score = int(round(team_pts.get(away_team, 0))) if away_team else None
+        home_score = int(round(team_pts.get(home_team, 0))) if home_team else None
+
+        finals_svc.record_finals_game(
+            year, gnum, None, away_team, home_team, away_score, home_score
+        )
+        for r in box:
+            if not r.get("player_id"):
+                continue
+            finals_svc.record_finals_player_stat(
+                year, gnum, r["player_id"], r.get("name", ""),
+                r.get("team_abbr", ""), r.get("pts", 0), r.get("reb", 0),
+                r.get("ast", 0), r.get("min", 0), r.get("fg3m", 0), r.get("usg", 0),
+            )
+        recorded.append({"game_number": gnum, "players": len(box)})
+
+    return jsonify({
+        "success":  True,
+        "year":     year,
+        "recorded": recorded,
+        "errors":   errors,
+        "record":   finals_svc.series_record(year),
+    })
 
 
 # ── Player Stats (raw) ────────────────────────────────────────────────────────
@@ -130,10 +429,14 @@ def player_analysis(player_id):
       opponent_team_id  (int)   – opponent's team ID for defense adjustment
       is_home           (bool)  – 'true' / 'false'
       odds_event_id     (str)   – The Odds API event ID for this game
+      finals_mode       (bool)  – apply Finals overlay (Feature 2), default off
+      game_id           (str)   – NBA game id, used to detect Finals game number
     """
     opponent_team_id = request.args.get("opponent_team_id", type=int)
     is_home = request.args.get("is_home", "false").lower() == "true"
     odds_event_id = request.args.get("odds_event_id", "").strip()
+    finals_mode = request.args.get("finals_mode", "false").lower() == "true"
+    game_id = request.args.get("game_id", "").strip()
 
     try:
         # ── Stats ──────────────────────────────────────────────────────
@@ -147,8 +450,86 @@ def player_analysis(player_id):
         )
         league_avg = nba_svc.get_league_avg_defense()
 
+        # ── Injury context (Feature 1) ─────────────────────────────────
+        # Build this player's own status + any redistributed minutes/usage
+        # absorbed from injured teammates, then feed it into the projection.
+        injury_adjustment = None
+        injury_impact = None
+        try:
+            team_id = stats.get("team_id")
+            if team_id:
+                report = build_team_injury_report(team_id)
+                redist = report.get("redistribution", {})
+                boosts = redist.get("boosts", {})
+
+                own_status = "Active"
+                for pl in report.get("players", []):
+                    if pl["player_id"] == player_id:
+                        own_status = pl.get("status", "Active")
+                        break
+
+                boost = boosts.get(player_id, {})
+                base_min = stats["season_avg"].get("min", 0.0) or 0.0
+                injury_adjustment = {
+                    "min_boost":  boost.get("min_boost", 0.0),
+                    "usg_boost":  boost.get("usg_boost", 0.0),
+                    "base_min":   base_min,
+                    "own_status": own_status,
+                }
+                injury_impact = {
+                    "own_status":    own_status,
+                    "is_boosted":    bool(boost.get("min_boost", 0.0) >= 0.5
+                                          or boost.get("usg_boost", 0.0) >= 0.01),
+                    "is_primary":    bool(boost.get("is_primary", False)),
+                    "min_boost":     round(boost.get("min_boost", 0.0), 1),
+                    "usg_boost":     round(boost.get("usg_boost", 0.0), 3),
+                    "absorbed_from": boost.get("absorbed_from", []),
+                    "reasons":       boost.get("reasons", []),
+                    "out_players":   redist.get("out_players", []),
+                    "summary":       redist.get("summary", ""),
+                }
+        except Exception as inj_exc:
+            logger.warning("injury context failed player=%s: %s", player_id, inj_exc)
+
         # ── Projections ────────────────────────────────────────────────
-        projections = model.calculate_projection(stats, opp_defense, league_avg, is_home)
+        projections = model.calculate_projection(
+            stats, opp_defense, league_avg, is_home, injury_adjustment
+        )
+
+        # ── Finals Mode overlay (Feature 2) — clean layer, only when ON ──
+        finals_context = None
+        is_finals_game = finals_svc.is_finals_game(game_id) if game_id else False
+        if finals_mode and is_finals_game:
+            game_number = finals_svc.finals_game_number(game_id)
+            year        = finals_svc.finals_season_year(game_id)
+            finals_stats = finals_svc.get_player_finals_stats(year, player_id)
+            base_minutes = stats["season_avg"].get("min", 0.0)
+            adjusted = finals_adjuster.adjust(projections, {
+                "game_number":  game_number,
+                "finals_stats": finals_stats,
+                "base_minutes": base_minutes,
+                "first_finals": False,  # data limitation — see Finals Context note
+            })
+            meta = adjusted.pop("_finals_meta", {})
+            projections = adjusted
+            rec = finals_svc.series_record(year)
+            finals_context = {
+                "active":          True,
+                "game_number":     game_number,
+                "year":            year,
+                "history_weight":  meta.get("history_weight"),
+                "pace_factor":     meta.get("pace_factor"),
+                "is_star":         meta.get("is_star"),
+                "is_bench":        meta.get("is_bench"),
+                "has_finals_data": meta.get("has_finals_data"),
+                "finals_games":    meta.get("finals_games"),
+                "notes":           meta.get("notes", []),
+                "series_summary":  rec.get("summary"),
+            }
+        elif is_finals_game:
+            # Finals game but toggle OFF — surface availability without adjusting
+            finals_context = {"active": False, "available": True,
+                              "game_number": finals_svc.finals_game_number(game_id)}
 
         # ── Odds ───────────────────────────────────────────────────────
         odds_data: dict | None = None
@@ -208,6 +589,7 @@ def player_analysis(player_id):
                 "jersey_number": stats.get("jersey_number", ""),
                 "headshot_url": f"https://cdn.nba.com/headshots/nba/latest/260x190/{player_id}.png",
                 "is_back_to_back": stats.get("is_back_to_back", False),
+                "injury_status": (injury_impact or {}).get("own_status", "Active"),
             },
             "stats": {
                 "season_avg": stats["season_avg"],
@@ -225,6 +607,8 @@ def player_analysis(player_id):
             "has_odds": has_odds,
             "opponent_team_id": opponent_team_id,
             "is_home": is_home,
+            "injury_impact": injury_impact,
+            "finals_context": finals_context,
         }
 
         return jsonify({"success": True, "analysis": analysis})
@@ -348,9 +732,10 @@ def api_debug_props():
 @app.route("/api/game/<event_id>/analysis")
 def api_game_analysis(event_id):
     """Generate a Claude write-up for a specific game (cached 1 h)."""
-    day_offset = request.args.get("day_offset", 0, type=int)
+    day_offset  = request.args.get("day_offset", 0, type=int)
+    finals_mode = request.args.get("finals_mode", "false").lower() == "true"
 
-    cache_key = f"game_analysis_{event_id}"
+    cache_key = f"game_analysis_{event_id}" + ("_finals" if finals_mode else "")
     cached = cache.get(cache_key)
     if cached:
         return jsonify({"success": True, **cached})
@@ -417,6 +802,16 @@ def api_game_analysis(event_id):
             "home_b2b":         home_b2b,
             "away_b2b":         away_b2b,
             "alternate_spreads": odds_svc.get_alternate_spreads(event_id),
+            "injury_note":      (
+                _injury_note_for_game(
+                    game["home_team"]["id"], game["away_team"]["id"],
+                    game["home_team"]["name"], game["away_team"]["name"],
+                ) if game else ""
+            ),
+            "finals_note":      (
+                _finals_note_for_game(game.get("game_id", ""))
+                if (game and finals_mode) else ""
+            ),
         }
 
         alt_spreads = context.get("alternate_spreads", [])
@@ -485,6 +880,11 @@ def api_games_top_pick():
                 "home_b2b":         game["home_team"]["id"] in yesterday_ids,
                 "away_b2b":         game["away_team"]["id"] in yesterday_ids,
                 "alternate_spreads": odds_svc.get_alternate_spreads(eid) if eid else [],
+                "injury_note":      _injury_note_for_game(
+                    game["home_team"]["id"], game["away_team"]["id"],
+                    game["home_team"]["name"], game["away_team"]["name"],
+                ),
+                "finals_note":      _finals_note_for_game(game.get("game_id", "")),
             })
 
         if not games_ctx:
@@ -542,7 +942,8 @@ def debug_odds():
 def refresh_odds():
     event_id = request.json.get("event_id") if request.is_json else None
     odds_svc.clear_cache(event_id)
-    return jsonify({"success": True, "message": "Odds cache cleared"})
+    clear_injury_caches()
+    return jsonify({"success": True, "message": "Odds + injury caches cleared"})
 
 
 # ── Bets views ────────────────────────────────────────────────────────────────

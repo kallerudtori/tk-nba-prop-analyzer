@@ -29,6 +29,17 @@ MIN_CAP = 0.15       # ±15 % minutes trend factor
 SPLIT_THRESHOLD = 0.05
 MIN_THRESHOLD   = 0.05
 
+# ── Injury adjustment (Feature 1) ─────────────────────────────────────────────
+# How sensitive each stat is to a usage-rate bump (per 1.0 of usg fraction).
+# Points & assists are usage-driven; rebounds are mostly minutes-driven.
+USG_SENS = {"pts": 2.5, "ast": 3.0, "reb": 0.8, "threes": 2.0, "pra": 2.0}
+INJ_FACTOR_CAP = 1.55          # never boost a projection more than +55 %
+# Expected-value haircut for a player who is himself uncertain/limited.
+OWN_STATUS_FACTOR = {
+    "Active": 1.0, "Questionable": 0.93, "GTD": 0.93,
+    "Doubtful": 0.75, "Out": 0.0,
+}
+
 _CFG_PATH = os.path.join(os.path.dirname(__file__), "weights_config.json")
 
 
@@ -66,6 +77,7 @@ class ProjectionModel:
         opponent_defense: dict | None,
         league_avg_defense: dict | None,
         is_home: bool,
+        injury_adjustment: dict | None = None,
     ) -> dict:
         """
         Returns projections for all five prop types:
@@ -75,6 +87,14 @@ class ProjectionModel:
                 'assists':  { ... },
                 'pra':      { ... },
                 'threes':   { ... },
+            }
+
+        injury_adjustment (optional, Feature 1):
+            {
+              "min_boost":  float,   # extra minutes absorbed from injured mates
+              "usg_boost":  float,   # extra usage fraction absorbed (0-1)
+              "base_min":   float,   # player's current minutes baseline
+              "own_status": str,     # this player's own injury status
             }
         """
         result = {}
@@ -91,8 +111,36 @@ class ProjectionModel:
                 league_avg_defense,
                 is_home,
                 stat_key,
+                injury_adjustment,
             )
         return result
+
+    def _injury_factor(self, stat_key: str, inj: dict | None) -> tuple:
+        """
+        Compute the injury multiplier for one stat plus whether a boost applied.
+        Returns (factor, boosted: bool).
+        """
+        if not inj:
+            return 1.0, False
+
+        own = OWN_STATUS_FACTOR.get(inj.get("own_status", "Active"), 1.0)
+
+        min_boost = float(inj.get("min_boost", 0.0) or 0.0)
+        usg_boost = float(inj.get("usg_boost", 0.0) or 0.0)
+        base_min  = float(inj.get("base_min", 0.0) or 0.0)
+
+        min_ratio = 1.0
+        if base_min > 0 and min_boost > 0:
+            min_ratio = (base_min + min_boost) / base_min
+
+        usg_mult = 1.0 + usg_boost * USG_SENS.get(stat_key, 2.0)
+
+        factor = min_ratio * usg_mult * own
+        boosted = (min_boost > 0.5 or usg_boost > 0.01) and own > 0
+        # Cap upside; own-status haircut may legitimately push below 1.0
+        if factor > INJ_FACTOR_CAP:
+            factor = INJ_FACTOR_CAP
+        return factor, boosted
 
     def calculate_value_label(self, edge: float) -> str:
         if edge >= STRONG_VALUE:
@@ -121,6 +169,7 @@ class ProjectionModel:
         lg_avg: dict | None,
         is_home: bool,
         stat_key: str,
+        injury_adjustment: dict | None = None,
     ) -> dict:
         season_avg = ps["season_avg"][stat_key]
         l5_avg = ps["last_5_avg"][stat_key]
@@ -180,17 +229,29 @@ class ProjectionModel:
 
         # ── Step 5: Back-to-back fatigue ─────────────────────────────────
         b2b_factor = 0.96 if ps.get("is_back_to_back", False) else 1.0
-        final = after_min * b2b_factor
+        after_b2b = after_min * b2b_factor
         adj["b2b_factor"] = round(b2b_factor, 3)
+
+        # ── Step 6: Injury redistribution (Feature 1) ────────────────────
+        inj_factor, inj_boosted = self._injury_factor(stat_key, injury_adjustment)
+        final = after_b2b * inj_factor
+        adj["inj_factor"] = round(inj_factor, 3)
 
         std_dev = ps["std_devs"].get(stat_key, 0.0)
         minutes_cv = ps.get("minutes_cv", 0.0)
 
+        confidence = self._confidence(games_played, final, std_dev, minutes_cv)
+        # Uncertain players (Questionable/GTD) → downgrade confidence one tier
+        own_status = (injury_adjustment or {}).get("own_status", "Active")
+        if own_status in ("Questionable", "GTD", "Doubtful"):
+            confidence = {"High": "Medium", "Medium": "Low"}.get(confidence, confidence)
+
         return {
             "projection": round(final, 1),
             "std_dev": round(std_dev, 2),
-            "confidence": self._confidence(games_played, final, std_dev, minutes_cv),
+            "confidence": confidence,
             "adjustments": adj,
+            "injury_boosted": inj_boosted,
         }
 
     def _opp_factor(self, stat_key: str, opp_def: dict, lg_avg: dict) -> float:
