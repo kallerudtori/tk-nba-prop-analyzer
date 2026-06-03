@@ -26,6 +26,43 @@ MARKET_MAP = {
 }
 MARKETS_PARAM = ",".join(MARKET_MAP.keys())
 
+# Bookmaker preference order. DraftKings is preferred, but it (and other major
+# books) periodically drop off The Odds API feed entirely — when that happens we
+# fall back to the next available US book so lines keep flowing. The app
+# auto-returns to DraftKings the moment it reappears in the feed.
+PREFERRED_BOOKS = ["draftkings", "fanduel", "betmgm", "betrivers", "caesars"]
+BOOKS_PARAM = ",".join(PREFERRED_BOOKS)
+BOOK_LABELS = {
+    "draftkings": "DraftKings",
+    "fanduel":    "FanDuel",
+    "betmgm":     "BetMGM",
+    "betrivers":  "BetRivers",
+    "caesars":    "Caesars",
+}
+
+
+def _pick_bookmaker(bookmakers: list, require_market: str | None = None):
+    """
+    Choose the best available bookmaker from a raw event's bookmaker list,
+    honoring PREFERRED_BOOKS order. If require_market is given, only consider
+    books that actually carry that market key. Returns (book_dict, key) or
+    (None, None).
+    """
+    def _has_market(b):
+        if not require_market:
+            return True
+        return any(m.get("key") == require_market for m in b.get("markets", []))
+
+    by_key = {b.get("key"): b for b in bookmakers if _has_market(b)}
+    for k in PREFERRED_BOOKS:
+        if k in by_key:
+            return by_key[k], k
+    # Any other book that qualifies (covers us2 books like espnbet, etc.)
+    for b in bookmakers:
+        if _has_market(b):
+            return b, b.get("key")
+    return None, None
+
 
 class OddsService:
     def __init__(self, cache):
@@ -127,20 +164,17 @@ class OddsService:
                         "regions": "us",
                         "markets": MARKETS_PARAM,
                         "oddsFormat": "american",
-                        "bookmakers": "draftkings",
+                        "bookmakers": BOOKS_PARAM,
                     },
                     timeout=10,
                 )
                 resp.raise_for_status()
                 self._store_quota(resp.headers)
                 raw = resp.json()
-                # Only cache for full 15 min if DK actually has data;
-                # otherwise cache 2 min so we retry quickly once props go up
-                dk_present = any(
-                    b.get("key") == "draftkings"
-                    for b in raw.get("bookmakers", [])
-                )
-                self.cache.set(cache_key, raw, timeout=900 if dk_present else 120)
+                # Cache 15 min if ANY preferred book has data; otherwise 2 min so
+                # we retry quickly once props go up (e.g. when DK returns).
+                any_present = bool(raw.get("bookmakers"))
+                self.cache.set(cache_key, raw, timeout=900 if any_present else 120)
             except requests.RequestException as exc:
                 logger.error("Odds API props error event=%s: %s", event_id, exc)
                 return None
@@ -150,38 +184,42 @@ class OddsService:
         return raw
 
     def _extract_player(self, event_data: dict, player_name: str) -> dict | None:
-        """Pull out this player's over/under lines from raw event odds."""
+        """Pull out this player's over/under lines from raw event odds, using
+        the preferred available bookmaker (DraftKings first, then fallbacks)."""
         result = {}
         name_lower = player_name.lower().strip()
 
-        for bookmaker in event_data.get("bookmakers", []):
-            if bookmaker.get("key") != "draftkings":
+        bookmaker, book_key = _pick_bookmaker(event_data.get("bookmakers", []))
+        if not bookmaker:
+            return None
+        source = BOOK_LABELS.get(book_key, book_key)
+
+        for market in bookmaker.get("markets", []):
+            prop_key = MARKET_MAP.get(market.get("key", ""))
+            if not prop_key:
                 continue
-            for market in bookmaker.get("markets", []):
-                prop_key = MARKET_MAP.get(market.get("key", ""))
-                if not prop_key:
-                    continue
 
-                over_out = under_out = None
-                for outcome in market.get("outcomes", []):
-                    desc = outcome.get("description", "").lower().strip()
-                    if self._names_match(desc, name_lower):
-                        if outcome["name"] == "Over":
-                            over_out = outcome
-                        elif outcome["name"] == "Under":
-                            under_out = outcome
+            over_out = under_out = None
+            for outcome in market.get("outcomes", []):
+                desc = outcome.get("description", "").lower().strip()
+                if self._names_match(desc, name_lower):
+                    if outcome["name"] == "Over":
+                        over_out = outcome
+                    elif outcome["name"] == "Under":
+                        under_out = outcome
 
-                if over_out:
-                    line = over_out.get("point", 0.0)
-                    over_odds = over_out.get("price", -110)
-                    under_odds = under_out.get("price", -110) if under_out else -110
-                    result[prop_key] = {
-                        "line": float(line),
-                        "over_odds": int(over_odds),
-                        "under_odds": int(under_odds),
-                        "implied_prob_over": self._to_prob(over_odds),
-                        "implied_prob_under": self._to_prob(under_odds),
-                    }
+            if over_out:
+                line = over_out.get("point", 0.0)
+                over_odds = over_out.get("price", -110)
+                under_odds = under_out.get("price", -110) if under_out else -110
+                result[prop_key] = {
+                    "line": float(line),
+                    "over_odds": int(over_odds),
+                    "under_odds": int(under_odds),
+                    "implied_prob_over": self._to_prob(over_odds),
+                    "implied_prob_under": self._to_prob(under_odds),
+                    "source": source,
+                }
 
         return result if result else None
 
@@ -251,7 +289,7 @@ class OddsService:
                     "regions": "us",
                     "markets": "h2h,spreads,totals",
                     "oddsFormat": "american",
-                    "bookmakers": "draftkings",
+                    "bookmakers": BOOKS_PARAM,
                     "commenceTimeFrom": commence_from,
                     "commenceTimeTo": commence_to,
                 },
@@ -277,10 +315,12 @@ class OddsService:
             "moneyline": None,
             "spread": None,
             "total": None,
+            "source": None,
         }
-        dk = next((b for b in event.get("bookmakers", []) if b["key"] == "draftkings"), None)
+        dk, book_key = _pick_bookmaker(event.get("bookmakers", []))
         if not dk:
             return result
+        result["source"] = BOOK_LABELS.get(book_key, book_key)
 
         for market in dk.get("markets", []):
             key      = market["key"]
@@ -345,7 +385,7 @@ class OddsService:
                     "regions":     "us",
                     "markets":     "alternate_spreads",
                     "oddsFormat":  "american",
-                    "bookmakers":  "draftkings",
+                    "bookmakers":  BOOKS_PARAM,
                 },
                 timeout=10,
             )
@@ -359,12 +399,11 @@ class OddsService:
         result = []
         seen   = set()
 
-        dk = next(
-            (b for b in data.get("bookmakers", []) if b["key"] == "draftkings"),
-            None,
+        dk, book_key = _pick_bookmaker(
+            data.get("bookmakers", []), require_market="alternate_spreads"
         )
         if not dk:
-            logger.warning("No DraftKings alternate_spreads for event %s", event_id)
+            logger.warning("No alternate_spreads from any book for event %s", event_id)
             self.cache.set(cache_key, [], timeout=3600)
             return []
 
