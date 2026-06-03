@@ -126,6 +126,18 @@ def generate_top_pick(games: list) -> dict:
                     alt_lines.append(f"{away} {_fmt_point(a['spread'])} ({_fmt_odds(a['odds'])})")
                 alt_text = f"   Alt spreads: {' | '.join(alt_lines)}\n"
 
+        inj_note = (g.get("injury_note") or "").strip()
+        inj_text = ""
+        if inj_note:
+            inj_one_line = inj_note.replace("\n", "  ").replace("- ", "")
+            inj_text = f"   🏥 Injuries: {inj_one_line}\n"
+
+        fin_note = (g.get("finals_note") or "").strip()
+        fin_text = ""
+        if fin_note:
+            fin_one_line = fin_note.replace("\n", "  ").replace("- ", "")
+            fin_text = f"   🏆 Finals: {fin_one_line}\n"
+
         lines_text += (
             f"{i}. {g['away_team']} ({g.get('away_record','')}) @ "
             f"{g['home_team']} ({g.get('home_record','')})  {g.get('game_time','')}{b2b_note}\n"
@@ -136,6 +148,8 @@ def generate_top_pick(games: list) -> dict:
             f"   O/U: {tot.get('point','?')} | "
             f"Defense: {g['away_team']} allows {g.get('away_opp_pts','?')} pts/g, "
             f"{g['home_team']} allows {g.get('home_opp_pts','?')} pts/g\n"
+            f"{inj_text}"
+            f"{fin_text}"
             f"{alt_text}\n"
         )
 
@@ -291,6 +305,20 @@ def _build_prompt(ctx: dict) -> str:
     else:
         alt_section = "Alternate Spreads: not available"
 
+    # Injury context (Feature 1) — passed in from app.py
+    injury_note = ctx.get("injury_note", "")
+    injury_section = (
+        f"INJURY REPORT (factor heavily — these reshape minutes, usage, and totals):\n{injury_note}\n"
+        if injury_note else "Injury Report: no significant absences detected."
+    )
+
+    # Finals context (Feature 2) — only present when Finals Mode is active
+    finals_note = ctx.get("finals_note", "")
+    finals_section = (
+        f"🏆 NBA FINALS CONTEXT (weight heavily):\n{finals_note}\n\n"
+        if finals_note else ""
+    )
+
     playoff_note = (
         "🏆 PLAYOFF CONTEXT: This is an NBA Playoff game. Factor in: significantly tighter "
         "defense and slower pace than regular season; stars play heavier minutes; role players "
@@ -303,9 +331,11 @@ def _build_prompt(ctx: dict) -> str:
 
     return f"""You are a sharp NBA betting analyst writing in an engaging, authoritative style.
 
-{playoff_note}Game: {away}{rec_away} @ {home}{rec_home}
+{finals_section}{playoff_note}Game: {away}{rec_away} @ {home}{rec_home}
 Tip-off: {ctx.get("game_time", "TBD")}
 Fatigue: {b2b_line}
+
+{injury_section}
 
 DraftKings Lines:
 - Moneyline:  {away} {away_ml} ({away_prob}% implied)  |  {home} {home_ml} ({home_prob}% implied)

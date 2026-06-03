@@ -92,7 +92,9 @@ function parlayClear() {
 
 /** Called by app.js after each player analysis completes */
 function parlayRegisterValuePick(pick) {
-  // pick: { playerId, playerName, teamId, prop, line, overOdds, edge, modelProb, valueLabel }
+  // pick: { playerId, playerName, teamId, prop, line, overOdds, edge, modelProb, valueLabel, ownStatus }
+  // Defensive: never surface sidelined players as value picks.
+  if (pick.ownStatus === "Out" || pick.ownStatus === "Doubtful") return;
   // Remove stale entry for same player+prop, then add/re-sort
   ParlayState.valuePicks = ParlayState.valuePicks.filter(
     p => !(p.playerId === pick.playerId && p.prop === pick.prop)
@@ -114,7 +116,10 @@ function parlayUnregisterPlayer(playerId) {
 
 /** Auto-suggest: top 3-5 props by edge, anti-correlated */
 function parlayAutoSuggest() {
-  const eligible = ParlayState.valuePicks.filter(p => p.edge != null && p.edge >= 1.0);
+  const eligible = ParlayState.valuePicks.filter(
+    p => p.edge != null && p.edge >= 1.0
+      && p.ownStatus !== "Out" && p.ownStatus !== "Doubtful"
+  );
   if (eligible.length === 0) {
     showToast("No value picks available yet. Analyse more players first.", "error");
     return;
@@ -292,11 +297,14 @@ function renderBestPicks() {
       );
       const edgeStr  = pick.edge >= 0 ? `+${pick.edge}` : `${pick.edge}`;
       const badge    = _valueBadgeClass(pick.valueLabel);
+      const uncertain = (pick.ownStatus === "Questionable" || pick.ownStatus === "GTD")
+        ? ` <span class="pick-warn" title="${pick.ownStatus} — availability uncertain">⚠️</span>`
+        : "";
 
       return `
         <div class="pick-row" onclick="parlayAddLeg(${JSON.stringify(pick).replace(/"/g, "&quot;")})">
           <div class="pick-info">
-            <div class="pick-name">${pick.playerName}</div>
+            <div class="pick-name">${pick.playerName}${uncertain}</div>
             <div class="pick-sub">
               ${_propLabel(pick.prop)} O${pick.line}
               · <span class="${badge}" style="font-size:0.65rem">${pick.valueLabel}</span>

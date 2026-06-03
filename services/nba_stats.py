@@ -429,6 +429,144 @@ class NBAStatsService:
         }
 
     # ------------------------------------------------------------------ #
+    #  Player Usage / Minutes (for injury redistribution — Feature 1)      #
+    # ------------------------------------------------------------------ #
+
+    def _get_league_player_usage(self) -> dict:
+        """
+        League-wide per-player MIN + USG_PCT (Advanced box) in one call.
+        Cached 1 h. Returns {player_id: {name, team_id, min, usg}}.
+        """
+        cache_key = f"league_player_usage_{_today_mt().isoformat()}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        from nba_api.stats.endpoints import leaguedashplayerstats
+
+        def _fetch(season_type):
+            return leaguedashplayerstats.LeagueDashPlayerStats(
+                season=CURRENT_SEASON,
+                measure_type_detailed_defense="Advanced",
+                per_mode_detailed="PerGame",
+                season_type_all_star=season_type,
+                timeout=30,
+            ).get_data_frames()[0]
+
+        usage: dict = {}
+        try:
+            time.sleep(NBA_API_DELAY)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                df = pool.submit(_fetch, "Regular Season").result(timeout=20)
+            for _, row in df.iterrows():
+                usage[int(row["PLAYER_ID"])] = {
+                    "name":    row.get("PLAYER_NAME", ""),
+                    "team_id": int(row["TEAM_ID"]),
+                    "min":     float(row.get("MIN", 0.0)),
+                    "usg":     float(row.get("USG_PCT", 0.0)),
+                }
+        except Exception as exc:
+            logger.error("Error fetching league player usage: %s", exc)
+            return {}
+
+        # Overlay postseason usage where available (playoff rotations tighten)
+        for post_type in ("Playoffs", "PlayIn"):
+            try:
+                time.sleep(NBA_API_DELAY)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    df_post = pool.submit(_fetch, post_type).result(timeout=20)
+                if df_post is None or df_post.empty:
+                    continue
+                for _, row in df_post.iterrows():
+                    pid = int(row["PLAYER_ID"])
+                    if pid in usage:
+                        # Postseason minutes/usage reflect current role better
+                        usage[pid]["min"] = round(
+                            usage[pid]["min"] * 0.4 + float(row.get("MIN", 0.0)) * 0.6, 1
+                        )
+                        usage[pid]["usg"] = round(
+                            usage[pid]["usg"] * 0.4 + float(row.get("USG_PCT", 0.0)) * 0.6, 3
+                        )
+            except Exception:
+                continue
+
+        self.cache.set(cache_key, usage, timeout=3600)
+        return usage
+
+    def get_team_player_usage(self, team_id: int) -> dict:
+        """Per-player MIN + USG_PCT for one team. {player_id: {name, min, usg}}."""
+        league = self._get_league_player_usage()
+        return {
+            pid: {"name": v["name"], "min": v["min"], "usg": v["usg"]}
+            for pid, v in league.items()
+            if v["team_id"] == team_id
+        }
+
+    def get_finals_boxscore(self, game_id: str) -> list:
+        """
+        Fetch a single game's traditional box score for Finals backfill
+        (Feature 2). Returns a list of per-player rows:
+            [{player_id, name, team_abbr, pts, reb, ast, min, fg3m, usg}, ...]
+        USG is not in the traditional box score, so it's left at 0.0 (the
+        finals model treats missing usg gracefully).
+        """
+        from nba_api.stats.endpoints import boxscoretraditionalv3
+
+        def _fetch():
+            return boxscoretraditionalv3.BoxScoreTraditionalV3(
+                game_id=game_id, timeout=20
+            ).get_data_frames()[0]
+
+        try:
+            time.sleep(NBA_API_DELAY)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                df = pool.submit(_fetch).result(timeout=20)
+        except Exception as exc:
+            logger.warning("Finals boxscore fetch failed game=%s: %s", game_id, exc)
+            return []
+
+        if df is None or df.empty:
+            return []
+
+        def _minutes(val) -> float:
+            # nba_api minutes can be "34:12" or "34.000000" or float
+            if val is None:
+                return 0.0
+            s = str(val)
+            if ":" in s:
+                mm, ss = s.split(":")[:2]
+                try:
+                    return round(int(mm) + int(ss) / 60.0, 1)
+                except ValueError:
+                    return 0.0
+            try:
+                return round(float(s), 1)
+            except ValueError:
+                return 0.0
+
+        rows = []
+        for _, r in df.iterrows():
+            try:
+                first = r.get("firstName", "") or ""
+                family = r.get("familyName", "") or ""
+                name = (f"{first} {family}".strip()
+                        or r.get("nameI", "") or r.get("playerName", ""))
+                rows.append({
+                    "player_id": int(r.get("personId", 0) or 0),
+                    "name":      name,
+                    "team_abbr": r.get("teamTricode", "") or "",
+                    "pts":       float(r.get("points", 0) or 0),
+                    "reb":       float(r.get("reboundsTotal", 0) or 0),
+                    "ast":       float(r.get("assists", 0) or 0),
+                    "min":       _minutes(r.get("minutes")),
+                    "fg3m":      float(r.get("threePointersMade", 0) or 0),
+                    "usg":       0.0,
+                })
+            except Exception:
+                continue
+        return rows
+
+    # ------------------------------------------------------------------ #
     #  Team / League Defense                                               #
     # ------------------------------------------------------------------ #
 

@@ -1980,3 +1980,182 @@ a.mobile-nav-btn { text-decoration: none; }
   .acc-stats-row { grid-template-columns: 1fr 1fr; }
   .optimizer-weights { gap: 8px; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════ *
+ *  Injury Impact (Feature 1)                                                  *
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* Roster row status badges */
+.player-row-injury {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+.player-row-injury.inj-out {
+  background: var(--red-bg); color: var(--red); border: 1px solid var(--red-dim);
+}
+.player-row-injury.inj-uncertain {
+  background: var(--gold-bg); color: var(--gold); border: 1px solid var(--gold-dim);
+}
+.player-row-injury.boosted {
+  background: var(--green-bg); color: var(--green); border: 1px solid var(--green-dim);
+}
+
+/* Roster row tints */
+.player-row.row-out { opacity: 0.6; }
+.player-row.row-out .player-row-name { text-decoration: line-through; }
+.player-row.row-uncertain { border-left: 2px solid var(--gold); }
+.player-row.row-boosted { border-left: 2px solid var(--green); }
+
+/* Analysis-card header badge */
+.injury-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.04em;
+}
+.injury-badge.inj-out {
+  background: var(--red-bg); color: var(--red); border: 1px solid var(--red-dim);
+}
+.injury-badge.inj-uncertain {
+  background: var(--gold-bg); color: var(--gold); border: 1px solid var(--gold-dim);
+}
+.injury-badge.boosted {
+  background: var(--green-bg); color: var(--green); border: 1px solid var(--green-dim);
+}
+
+/* Injury Impact section inside analysis card */
+.injury-impact {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--gold);
+  border-radius: var(--radius);
+}
+.injury-impact-header {
+  display: flex; align-items: center; gap: 8px;
+  font-weight: 600; font-size: 0.82rem; margin-bottom: 8px;
+}
+.injury-impact-title { color: var(--gold); }
+.injury-impact-body { font-size: 0.78rem; line-height: 1.55; }
+.inj-line { padding: 3px 0; }
+.inj-line.boosted { color: var(--green); font-weight: 600; }
+.inj-line.row-out { color: var(--red); }
+.inj-line.row-uncertain { color: var(--gold); }
+.inj-reason { color: var(--text-secondary); padding-left: 4px; }
+.inj-summary {
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px dashed var(--border-light);
+  color: var(--text-secondary); font-style: italic;
+}
+.inj-primary {
+  background: var(--green); color: var(--bg-base);
+  font-size: 0.58rem; font-weight: 800;
+  padding: 1px 5px; border-radius: var(--radius-sm); margin-left: 4px;
+}
+.pick-warn { font-size: 0.72rem; }
+
+/* ── Injury Override Modal ─────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.modal-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 22px;
+  width: 100%; max-width: 480px;
+  max-height: 85vh; overflow-y: auto;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.modal-title { font-size: 1.05rem; }
+.modal-close {
+  background: none; border: none; color: var(--text-secondary);
+  font-size: 1.1rem; cursor: pointer; padding: 4px 8px;
+  border-radius: var(--radius-sm);
+}
+.modal-close:hover { background: var(--red-bg); color: var(--red); }
+
+.injury-form {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin: 14px 0 18px;
+}
+.inj-input {
+  flex: 1 1 auto; min-width: 110px;
+  padding: 7px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+}
+.section-title.small { font-size: 0.8rem; }
+.inj-override-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 8px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.inj-override-name { font-weight: 600; font-size: 0.82rem; margin-right: 6px; }
+
+/* ════════════ Finals Mode (Feature 2) ════════════ */
+.finals-toggle-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin: 8px 0 10px;
+  padding: 8px 12px;
+  background: var(--gold-bg);
+  border: 1px solid var(--gold-dim);
+  border-radius: 8px;
+}
+.finals-toggle-bar.hidden { display: none; }
+.finals-toggle {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  user-select: none;
+}
+.finals-toggle input { accent-color: var(--gold); width: 16px; height: 16px; cursor: pointer; }
+.finals-toggle-label { font-weight: 700; font-size: 0.85rem; color: var(--gold); }
+.finals-toggle-meta  { font-size: 0.72rem; color: var(--text-secondary); }
+
+.finals-context {
+  margin: 10px 0;
+  padding: 12px 14px;
+  background: var(--gold-bg);
+  border: 1px solid var(--gold-dim);
+  border-left: 3px solid var(--gold);
+  border-radius: 8px;
+}
+.finals-context.hidden { display: none; }
+.finals-context-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.finals-context-icon  { font-size: 1rem; }
+.finals-context-title { font-weight: 700; font-size: 0.88rem; color: var(--gold); }
+.finals-context-game  {
+  margin-left: auto; font-size: 0.72rem; font-weight: 600;
+  color: var(--gold-dim); text-transform: uppercase; letter-spacing: 0.04em;
+}
+.finals-line {
+  font-size: 0.82rem; color: var(--text-primary); padding: 2px 0;
+}
+.finals-line strong { color: var(--gold); }
+.finals-summary {
+  font-size: 0.8rem; color: var(--text-secondary);
+  margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-light);
+}
+.finals-reason {
+  font-size: 0.74rem; color: var(--text-muted); padding: 1px 0 1px 4px;
+}
