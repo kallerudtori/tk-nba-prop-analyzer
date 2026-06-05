@@ -2008,7 +2008,6 @@ a.mobile-nav-btn { text-decoration: none; }
 
 /* Roster row tints */
 .player-row.row-out { opacity: 0.6; }
-.player-row.row-out .player-row-name { text-decoration: line-through; }
 .player-row.row-uncertain { border-left: 2px solid var(--gold); }
 .player-row.row-boosted { border-left: 2px solid var(--green); }
 

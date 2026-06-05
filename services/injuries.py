@@ -30,6 +30,15 @@ GTD         = "GTD"
 
 VALID_STATUSES = {ACTIVE, QUESTIONABLE, DOUBTFUL, OUT, GTD}
 
+# Severity ranking — higher = more sidelined. Used to reconcile conflicting
+# ESPN signals (top-level `status` vs `fantasyStatus`) by taking the worse one.
+_SEVERITY = {ACTIVE: 0, GTD: 1, QUESTIONABLE: 2, DOUBTFUL: 3, OUT: 4}
+
+
+def _more_severe(a: str, b: str) -> str:
+    """Return whichever canonical status sidelines the player more."""
+    return a if _SEVERITY.get(a, 0) >= _SEVERITY.get(b, 0) else b
+
 # Statuses that fully sideline a player → excluded from suggestions
 SIDELINED = {OUT, DOUBTFUL}
 # Statuses that are uncertain → kept in suggestions but flagged
@@ -49,7 +58,10 @@ def classify_status(raw: str) -> str:
     if not raw:
         return ACTIVE
     r = raw.strip().lower().replace("-", " ").replace("_", " ")
-    if r in ("out", "o"):
+    if r in ("out", "o", "ofs", "out for season", "ir", "injured reserve",
+             "nfi", "susp", "suspension", "suspended"):
+        # OFS = out for season, IR = injured reserve, NFI = non-football/
+        # basketball injury — all sideline the player.
         return OUT
     if r in ("doubtful", "d"):
         return DOUBTFUL
@@ -112,11 +124,15 @@ def fetch_espn_injuries(cache) -> dict:
             # Position abbreviation if present
             pos = (ath.get("position", {}) or {}).get("abbreviation", "")
 
-            # Prefer the finer-grained fantasyStatus when present
+            # Reconcile the two ESPN signals: the top-level `status` string and
+            # the finer-grained `fantasyStatus`. Take whichever is MORE severe,
+            # so an unrecognized fantasy code (e.g. "OFS") can never downgrade a
+            # clear top-level "Out" to Active.
             details = item.get("details", {}) or {}
             fantasy = (details.get("fantasyStatus", {}) or {}).get("abbreviation", "")
-            raw_status = fantasy or item.get("status", "")
-            status = classify_status(raw_status)
+            top_status = item.get("status", "")
+            status = _more_severe(classify_status(fantasy), classify_status(top_status))
+            raw_status = top_status or fantasy
 
             # Human-readable description
             desc_parts = [p for p in (details.get("type"), details.get("detail")) if p]
@@ -242,12 +258,19 @@ def status_for_player(injury_map: dict, player_id, player_name: str) -> dict:
     # 3. ESPN by name (exact)
     if norm in espn:
         return espn[norm]
-    # 4. ESPN by last-name fallback (handles "C. Cunningham" vs "Cade Cunningham")
-    p_last = norm.split()[-1] if norm.split() else ""
-    if len(p_last) > 2:
+    # 4. ESPN by last name + first-initial (handles "C. Cunningham" vs
+    #    "Cade Cunningham"). The first initial MUST agree, otherwise two
+    #    different players sharing a common surname (e.g. Tre Johnson vs
+    #    Keldon Johnson) would be wrongly matched.
+    p_parts = norm.split()
+    p_last = p_parts[-1] if p_parts else ""
+    p_first = p_parts[0] if len(p_parts) > 1 else ""
+    if len(p_last) > 2 and p_first:
         for ename, entry in espn.items():
             e_parts = ename.split()
-            if e_parts and e_parts[-1] == p_last:
+            if len(e_parts) < 2:
+                continue
+            if e_parts[-1] == p_last and e_parts[0][0] == p_first[0]:
                 return entry
     return {
         "status": ACTIVE,
