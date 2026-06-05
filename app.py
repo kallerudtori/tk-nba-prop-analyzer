@@ -207,6 +207,23 @@ def today_games():
             datetime.now(pytz.timezone("America/Denver")).date()
             + timedelta(days=day_offset)
         ).isoformat()
+
+        # Fallback: stats.nba.com frequently blocks Railway's datacenter IP,
+        # returning an empty slate even when games exist. The Odds API is
+        # reachable from cloud hosts, so rebuild the schedule from its events.
+        from_odds = False
+        if not games and events:
+            games = nba_svc.build_games_from_events(events)
+            from_odds = True
+            logger.warning(
+                "get_games() empty (likely stats.nba.com IP block); "
+                "rebuilt %d game(s) from Odds API events", len(games)
+            )
+
+        # In June the only NBA series is the Finals, so synthesized games (which
+        # lack an NBA game_id) can still be flagged by date.
+        june_finals = game_date.split("-")[1] == "06"
+
         for game in games:
             game["odds_event_id"] = odds_svc.match_game_to_event(
                 game["home_team"]["name"],
@@ -215,11 +232,19 @@ def today_games():
             )
             # Finals detection (Feature 2) — flag games so the UI can show the toggle
             gid = game.get("game_id", "")
-            game["is_finals"] = finals_svc.is_finals_game(gid, game_date)
+            is_finals = finals_svc.is_finals_game(gid, game_date)
+            if not gid and june_finals:
+                is_finals = True  # date-based fallback for Odds-sourced games
+            game["is_finals"] = is_finals
             game["finals_game_number"] = (
-                finals_svc.finals_game_number(gid) if game["is_finals"] else None
+                finals_svc.finals_game_number(gid) if is_finals and gid else None
             )
-        return jsonify({"success": True, "games": games, "day_offset": day_offset})
+        return jsonify({
+            "success": True,
+            "games": games,
+            "day_offset": day_offset,
+            "source": "odds_fallback" if from_odds else "nba",
+        })
     except Exception as exc:
         logger.error("today_games error: %s", exc, exc_info=True)
         return jsonify({"success": False, "error": str(exc)}), 500

@@ -184,6 +184,81 @@ class NBAStatsService:
             logger.error("Error fetching games (offset=%s): %s", day_offset, exc, exc_info=True)
             return []
 
+    def build_games_from_events(self, events: list) -> list:
+        """
+        Fallback schedule builder used when get_games() comes back empty —
+        typically because stats.nba.com is blocking Railway's datacenter IP.
+
+        Synthesizes the same game shape from The Odds API events (which are
+        reachable from cloud hosts). Team IDs/abbreviations are resolved from
+        nba_api's *static* team list — a local lookup, no network call — so the
+        rest of the app (rosters, injuries, props) keeps working.
+
+        Limitations vs the real scoreboard: no NBA game_id, and no win/loss
+        records. game_id is left empty; callers should use a date-based Finals
+        check for these entries.
+        """
+        if not events:
+            return []
+
+        from nba_api.stats.static import teams as nba_teams_static
+
+        all_teams = nba_teams_static.get_teams()
+        # Lookup by full name and by nickname (last word), both normalized.
+        by_full = {t["full_name"].lower(): t for t in all_teams}
+        by_nick = {t["nickname"].lower(): t for t in all_teams}
+
+        def _resolve(name: str) -> dict:
+            if not name:
+                return {}
+            n = name.lower().strip()
+            if n in by_full:
+                return by_full[n]
+            last = n.split()[-1] if n.split() else ""
+            return by_nick.get(last, {})
+
+        def _commence_to_mt(iso_utc: str) -> str:
+            try:
+                dt = datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
+                local = dt.astimezone(_MOUNTAIN)
+                h = local.hour
+                ampm = "pm" if h >= 12 else "am"
+                if h > 12:
+                    h -= 12
+                elif h == 0:
+                    h = 12
+                return f"{h}:{local.minute:02d} {ampm} MT"
+            except (ValueError, AttributeError):
+                return "TBD"
+
+        games = []
+        for ev in events:
+            home_t = _resolve(ev.get("home_team", ""))
+            away_t = _resolve(ev.get("away_team", ""))
+            game_time = _commence_to_mt(ev.get("commence_time", ""))
+            games.append({
+                "game_id": "",  # not available from the Odds API
+                "home_team": {
+                    "id":           home_t.get("id"),
+                    "name":         home_t.get("full_name", ev.get("home_team", "")),
+                    "abbreviation": home_t.get("abbreviation", ""),
+                    "wins":         None,
+                    "losses":       None,
+                },
+                "away_team": {
+                    "id":           away_t.get("id"),
+                    "name":         away_t.get("full_name", ev.get("away_team", "")),
+                    "abbreviation": away_t.get("abbreviation", ""),
+                    "wins":         None,
+                    "losses":       None,
+                },
+                "game_time":   game_time,
+                "status_text": game_time,
+                "status_code": 1,  # scheduled
+                "_from_odds":  True,
+            })
+        return games
+
     # Keep old name as an alias so nothing else breaks
     def get_today_games(self) -> list:
         return self.get_games(day_offset=0)
