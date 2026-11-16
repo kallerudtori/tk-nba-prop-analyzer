@@ -1,10 +1,27 @@
 flask>=3.0.0
 flask-caching>=2.3.0
 python-dotenv>=1.0.0
-nba_api>=1.4.1
 requests>=2.31.0
-pandas>=2.2.0
-scipy>=1.13.0
-pytz>=2024.1
 gunicorn>=22.0.0
+pytz>=2024.1
+
+# Data / modelling
+pandas>=2.2.0
+numpy>=1.26.0
+scipy>=1.13.0
+
+# NBA
+nba_api>=1.4.1
+
+# LLM
 anthropic>=0.40.0
+
+# Persistence — Postgres only. SQLite is deliberately unsupported: Railway's
+# container filesystem is ephemeral, so a SQLite file loses every graded
+# prediction on redeploy and the learning loop silently resets.
+SQLAlchemy>=2.0.30
+alembic>=1.13.0
+psycopg2-binary>=2.9.9
+
+# Tests
+pytest>=8.0.0

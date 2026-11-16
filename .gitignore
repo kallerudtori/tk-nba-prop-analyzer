@@ -25,3 +25,10 @@ env/
 
 # Logs
 *.log
+
+# Local SQLite artefacts — the app is Postgres-only; a committed .db file on
+# Railway's ephemeral filesystem silently loses every graded prediction on
+# redeploy, which is why this is ignored rather than tracked.
+*.db
+*.sqlite
+*.sqlite3
