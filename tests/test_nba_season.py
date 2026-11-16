@@ -74,3 +74,27 @@ def test_season_string_shape():
         for month in (1, 6, 10, 12):
             season = derive_season(date(year, month, 1))
             assert re.fullmatch(r"\d{4}-\d{2}", season), season
+
+
+def test_templates_do_not_hardcode_a_season():
+    """
+    The header badge must come from the derived season, not a literal.
+
+    All three templates previously carried the string "2025-26 Season" inline.
+    That is the same failure as the hardcoded CURRENT_SEASON constant one layer
+    up, and worse in one respect: a stale badge on a rendered page looks
+    authoritative, so nobody questions the numbers beneath it.
+    """
+    root = Path(__file__).resolve().parents[1]
+    pattern = re.compile(r"\b20\d{2}[-–]\d{2}\b")
+
+    offenders = []
+    for template in (root / "templates").glob("*.html"):
+        for i, line in enumerate(template.read_text().splitlines(), 1):
+            if pattern.search(line):
+                offenders.append(f"{template.name}:{i}: {line.strip()[:70]}")
+
+    assert not offenders, (
+        "Templates hardcode a season string; render {{ current_season }} "
+        "instead:\n" + "\n".join(offenders)
+    )
