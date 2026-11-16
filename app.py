@@ -161,6 +161,25 @@ def handle_any_exception(e):
     return jsonify({"success": False, "error": str(e)}), 500
 
 
+# ── Template globals ──────────────────────────────────────────────────────────
+
+@app.context_processor
+def inject_season():
+    """
+    Expose the active NBA season to every template.
+
+    The header badge used to be the literal string "2025–26 Season" in three
+    separate templates. That is the same failure as the hardcoded
+    CURRENT_SEASON constant, one layer up: it would have kept claiming the
+    wrong season indefinitely even after the data layer was fixed, which is
+    worse than a visible bug because the page looks authoritative.
+    """
+    from services.nba_stats import CURRENT_SEASON
+
+    # "2026-27" -> "2026–27" to match the existing en-dash styling.
+    return {"current_season": CURRENT_SEASON.replace("-", "–")}
+
+
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 @app.route("/")

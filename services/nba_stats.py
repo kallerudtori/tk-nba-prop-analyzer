@@ -5,10 +5,11 @@ Cache TTL: 1 hour for stats, 30 min for today's games/rosters.
 """
 
 import math
+import os
 import time
 import logging
 import concurrent.futures
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import re
 import pandas as pd
@@ -57,8 +58,30 @@ def _exp_decay_avg(vals, decay: float = 0.07) -> float:
 
 logger = logging.getLogger(__name__)
 
-# Current NBA season — update each October
-CURRENT_SEASON = "2025-26"
+def _derive_season(today: date | None = None) -> str:
+    """
+    The NBA season string ("2026-27") for a given date.
+
+    A new season starts in October, so October through December belong to the
+    season named for that calendar year, and January through September belong
+    to the one that started the previous October. During the summer this
+    correctly keeps returning the season that just finished, which is the data
+    you want in the offseason.
+
+    This used to be a hardcoded constant with a comment saying to update it
+    every October. It was not updated, so the entire app silently served the
+    previous season: stale rosters (traded players shown on their old teams),
+    "games played this season" counts above 82, and "last 5 games" that were
+    actually the previous spring's playoffs. Deriving it removes the annual
+    manual step that failed.
+    """
+    today = today or date.today()
+    start_year = today.year if today.month >= 10 else today.year - 1
+    return f"{start_year}-{(start_year + 1) % 100:02d}"
+
+
+# Override only to pin a historical season for backfills; normally unset.
+CURRENT_SEASON = os.getenv("NBA_SEASON_OVERRIDE", "").strip() or _derive_season()
 
 # Rate-limit pause between nba_api calls (seconds)
 NBA_API_DELAY = 0.65
